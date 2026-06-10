@@ -1,7 +1,75 @@
-.app {
-  max-width: 720px;
+.landing {
+  max-width: 960px;
   margin: 0 auto;
-  padding: 2rem;
+  padding: 48px 20px;
+}
+
+.landing__header {
   text-align: center;
-  font-family: system-ui, sans-serif;
+  margin-bottom: 36px;
+}
+
+.landing__title {
+  margin: 0;
+  font-size: 2.6rem;
+  letter-spacing: 0.04em;
+  background: linear-gradient(90deg, #f08a24, #ffd76a);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+.landing__subtitle {
+  color: #8da0c4;
+  margin-top: 8px;
+}
+
+.landing__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 18px;
+}
+
+.game-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  background: #16223a;
+  border: 1px solid #2c3e63;
+  border-radius: 14px;
+  padding: 20px;
+  text-decoration: none;
+  color: inherit;
+  transition: transform 0.1s ease, border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.game-card:hover {
+  transform: translateY(-4px);
+  border-color: #f08a24;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.4);
+}
+
+.game-card__title {
+  margin: 0;
+  font-size: 1.4rem;
+  color: #f08a24;
+}
+
+.game-card__tagline {
+  margin: 0;
+  font-weight: 600;
+  color: #c3d0ea;
+}
+
+.game-card__desc {
+  margin: 0;
+  font-size: 0.9rem;
+  color: #8da0c4;
+  line-height: 1.4;
+}
+
+.game-card__cta {
+  margin-top: auto;
+  font-weight: 800;
+  color: #ffd76a;
 }

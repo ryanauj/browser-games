@@ -1,6 +1,12 @@
 :root {
-  color-scheme: light dark;
+  color-scheme: dark;
+}
+* {
+  box-sizing: border-box;
 }
 body {
   margin: 0;
+  background: #0a1020;
+  color: #e8eefc;
+  font-family: 'Segoe UI', system-ui, sans-serif;
 }
