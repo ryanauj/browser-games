@@ -1,4 +1,6 @@
 import {
+  CLASH_DAMAGE_MAX,
+  CLASH_DAMAGE_MIN,
   DECK_SIZE,
   DRAW_PER_TURN,
   ENERGY_PER_TURN,
@@ -7,12 +9,16 @@ import {
   MAX_ENERGY,
   MISMATCH_PENALTY,
   OPENING_HAND,
+  OPENING_HAND_MIN_ATHLETES,
   POSITIONS,
   POSSESSION_GAME_SECONDS_MAX,
   POSSESSION_GAME_SECONDS_MIN,
   QUARTER_GAME_SECONDS,
   QUARTERS,
+  HUSTLE_CAP,
+  RALLY_DEFICIT,
   STARTING_ENERGY,
+  TECH_FOUL_DAMAGE,
   THREE_POINT_MARGIN,
 } from './constants'
 import { ATHLETES, POWER_UPS } from './cards'
@@ -55,11 +61,33 @@ function buildDeck(side: Side, state: number): [Card[], number] {
       copies.push({ ...card, id: `${side}-${card.id}#${counter++}` } as Card)
     }
   }
-  ATHLETES.forEach((a) => stamp(a, 2))
+  // High-cost stars are single-copy "legendaries" so abilities like Takeover
+  // can't stack into a runaway board.
+  ATHLETES.forEach((a) => stamp(a, a.cost >= 5 ? 1 : 2))
   POWER_UPS.forEach((p) => stamp(p, 2))
 
   const [shuffled, next] = shuffle(copies, state)
-  return [shuffled.slice(0, DECK_SIZE), next]
+  return [ensureOpeningAthletes(shuffled.slice(0, DECK_SIZE)), next]
+}
+
+/**
+ * Guarantee the opening hand is playable: swap power-ups out of the opening
+ * segment for athletes deeper in the deck until the minimum is met.
+ */
+function ensureOpeningAthletes(deck: Card[]): Card[] {
+  const out = deck.slice()
+  let athletes = out.slice(0, OPENING_HAND).filter((c) => c.kind === 'athlete').length
+  for (let i = 0; i < OPENING_HAND && athletes < OPENING_HAND_MIN_ATHLETES; i++) {
+    if (out[i].kind === 'athlete') continue
+    for (let j = out.length - 1; j >= OPENING_HAND; j--) {
+      if (out[j].kind === 'athlete') {
+        ;[out[i], out[j]] = [out[j], out[i]]
+        athletes++
+        break
+      }
+    }
+  }
+  return out
 }
 
 /** Draw up to `n` cards from the top of the deck, respecting the hand cap. */
@@ -97,7 +125,7 @@ export function createInitialState(seed: number = Date.now()): GameState {
   const ai = createPlayer('ai', aiDeck)
   const energy = energyForTurn(1)
 
-  return {
+  const state: GameState = {
     turn: 1,
     quarter: 1,
     phase: 'deploy',
@@ -111,6 +139,9 @@ export function createInitialState(seed: number = Date.now()): GameState {
     log: ['Tip-off! Q1 is underway.'],
     winner: undefined,
   }
+  // The CPU commits its plays at the START of every possession so the player
+  // can see the opposing lineup (and the lane projections) while planning.
+  return applyAiTurn(state)
 }
 
 // ---------------------------------------------------------------------------
@@ -141,7 +172,7 @@ export function effectiveOff(
   lateGame: boolean,
 ): number {
   let off = ath.card.off + fitMods(ath.card, ath.slot).off + ath.clashOff
-  if (ath.card.ability === 'hustle') off += ath.turnsSurvived
+  if (ath.card.ability === 'hustle') off += Math.min(HUSTLE_CAP, ath.turnsSurvived)
   if (ath.card.ability === 'fastBreak' && opposingEmpty) off += 2
   if (ath.card.ability === 'clutch' && lateGame) off += 2
   // Takeover boosts other allies, so count takeover athletes other than self.
@@ -266,7 +297,7 @@ export function playPowerUp(
       const tSide = targetSide ?? oppSide
       const targetPlayer = tSide === side ? me : opp
       if (!targetSlot || !targetPlayer.lineup[targetSlot]) return state
-      const damaged = applyDamageToSlot(targetPlayer, targetSlot, 4)
+      const damaged = applyDamageToSlot(targetPlayer, targetSlot, TECH_FOUL_DAMAGE)
       if (tSide === side) me = damaged.player
       else opp = damaged.player
       logLine += damaged.fouledOut ? ` It fouls out the target!` : ''
@@ -287,7 +318,11 @@ function buffLineup(p: PlayerState, fn: (a: BoardAthlete) => BoardAthlete): Play
   return { ...p, lineup }
 }
 
-/** Apply raw damage to one athlete, honouring Iron, removing on foul-out. */
+/**
+ * Apply raw damage to one athlete, honouring Iron. On foul-out the athlete
+ * leaves the court and its card cycles to the bottom of the owner's deck
+ * (Clash Royale-style rotation), so a wiped board can always rebuild.
+ */
 function applyDamageToSlot(
   p: PlayerState,
   slot: Position,
@@ -302,82 +337,112 @@ function applyDamageToSlot(
     ironUsed = true
   }
   if (sta <= 0) {
-    return { player: { ...p, lineup: { ...p.lineup, [slot]: null } }, fouledOut: true }
+    return {
+      player: { ...p, lineup: { ...p.lineup, [slot]: null }, deck: [...p.deck, a.card] },
+      fouledOut: true,
+    }
   }
   return { player: { ...p, lineup: { ...p.lineup, [slot]: { ...a, sta, ironUsed } } }, fouledOut: false }
 }
 
 // ---------------------------------------------------------------------------
-// Clash resolution (simultaneous)
+// Clash math (shared by resolution and the live lane preview)
 // ---------------------------------------------------------------------------
 
+/** Projected outcome of one lane if the possession ended right now. */
+export interface LaneOutcome {
+  pos: Position
+  /** Points each side would score in this lane. */
+  playerPts: number
+  aiPts: number
+  /** Stamina damage each side's athlete would take (0 if lane half empty). */
+  playerDmg: number
+  aiDmg: number
+  playerHas: boolean
+  aiHas: boolean
+}
+
+const bucket = (margin: number): number => {
+  if (margin <= 0) return 0
+  return margin >= THREE_POINT_MARGIN ? 3 : 2
+}
+
 /**
- * Resolve all five lanes simultaneously: snapshot effective stats first, then
- * apply scoring and stamina damage, then remove fouled-out athletes and clear
- * one-shot clash buffs. Returns a new state (does not advance the clock/turn).
+ * Compute every lane's outcome from the current boards. Because the CPU has
+ * already committed its plays for the possession, this is an exact preview of
+ * what resolveClash will do — the UI surfaces it as per-lane chips.
  */
-export function resolveClash(state: GameState): GameState {
+export function computeClash(state: GameState): LaneOutcome[] {
   const player = state.players.player
   const ai = state.players.ai
   const lateGame = state.quarter >= QUARTERS
 
-  // 1. Snapshot effective stats from the pre-clash board.
-  type Snap = { off: number; def: number }
-  const pSnap: Partial<Record<Position, Snap>> = {}
-  const aSnap: Partial<Record<Position, Snap>> = {}
-  for (const pos of POSITIONS) {
+  return POSITIONS.map((pos) => {
     const pA = player.lineup[pos]
     const aA = ai.lineup[pos]
-    if (pA) pSnap[pos] = { off: effectiveOff(pA, player, aA === null, lateGame), def: effectiveDef(pA) }
-    if (aA) aSnap[pos] = { off: effectiveOff(aA, ai, pA === null, lateGame), def: effectiveDef(aA) }
-  }
+    const p = pA
+      ? { off: effectiveOff(pA, player, aA === null, lateGame), def: effectiveDef(pA) }
+      : null
+    const a = aA
+      ? { off: effectiveOff(aA, ai, pA === null, lateGame), def: effectiveDef(aA) }
+      : null
 
-  // 2. Compute buckets and damage per lane from the snapshot. Beating the
-  //    defender is a 2; a blowout margin is a 3; a contested lane scores 0.
-  const bucket = (margin: number): number => {
-    if (margin <= 0) return 0
-    return margin >= THREE_POINT_MARGIN ? 3 : 2
-  }
+    // Beating the defender scores 2, or 3 on a wide margin. An empty opposing
+    // lane concedes an easy 2 (uncontested layup — never a 3, which keeps
+    // board wipes from snowballing). Stamina damage is the attack margin
+    // (OFF − DEF) clamped to [1, 3] in contested lanes: walls are mortal, but
+    // a fresh athlete always survives its first clash.
+    const clamp = (n: number) => Math.min(CLASH_DAMAGE_MAX, Math.max(CLASH_DAMAGE_MIN, n))
+    const playerPts = p ? (a ? bucket(p.off - a.def) : p.off > 0 ? 2 : 0) : 0
+    const aiPts = a ? (p ? bucket(a.off - p.def) : a.off > 0 ? 2 : 0) : 0
+    const playerDmg = p && a ? clamp(a.off - p.def) : 0
+    const aiDmg = p && a ? clamp(p.off - a.def) : 0
+
+    return { pos, playerPts, aiPts, playerDmg, aiDmg, playerHas: !!pA, aiHas: !!aA }
+  })
+}
+
+/**
+ * Resolve all five lanes simultaneously: snapshot outcomes from the pre-clash
+ * board, then apply scoring and stamina damage, remove fouled-out athletes,
+ * and clear one-shot clash buffs. Returns a new state (does not advance the
+ * clock/turn).
+ */
+export function resolveClash(state: GameState): GameState {
+  const lanes = computeClash(state)
+
   let pScore = 0
   let aScore = 0
-  const pDamage: Partial<Record<Position, number>> = {}
-  const aDamage: Partial<Record<Position, number>> = {}
   const lines: string[] = []
-
-  for (const pos of POSITIONS) {
-    const p = pSnap[pos]
-    const a = aSnap[pos]
-    if (p) {
-      const pts = bucket(p.off - (a ? a.def : 0))
-      pScore += pts
-      if (a) aDamage[pos] = (aDamage[pos] ?? 0) + p.off
-      if (pts > 0) lines.push(`You score ${pts} at ${pos}.`)
-    }
-    if (a) {
-      const pts = bucket(a.off - (p ? p.def : 0))
-      aScore += pts
-      if (p) pDamage[pos] = (pDamage[pos] ?? 0) + a.off
-      if (pts > 0) lines.push(`CPU scores ${pts} at ${pos}.`)
-    }
+  for (const lane of lanes) {
+    pScore += lane.playerPts
+    aScore += lane.aiPts
+    if (lane.playerPts > 0) lines.push(`You score ${lane.playerPts} at ${lane.pos}.`)
+    if (lane.aiPts > 0) lines.push(`CPU scores ${lane.aiPts} at ${lane.pos}.`)
   }
 
-  // 3. Apply damage + foul-outs, then clear clash buffs for survivors.
-  const settle = (p: PlayerState, dmg: Partial<Record<Position, number>>): PlayerState => {
+  const settle = (p: PlayerState, dmgOf: (lane: LaneOutcome) => number): PlayerState => {
     let out = p
-    for (const pos of POSITIONS) {
-      const d = dmg[pos]
-      if (d && out.lineup[pos]) {
-        const res = applyDamageToSlot(out, pos, d)
+    for (const lane of lanes) {
+      const d = dmgOf(lane)
+      if (d > 0 && out.lineup[lane.pos]) {
+        const res = applyDamageToSlot(out, lane.pos, d)
         out = res.player
-        if (res.fouledOut) lines.push(`${labelFor(p.side)}'s ${pos} fouls out.`)
+        if (res.fouledOut) lines.push(`${labelFor(p.side)}'s ${lane.pos} fouls out — back to the deck.`)
       }
     }
     // clear one-shot buffs
     return buffLineup(out, (ath) => ({ ...ath, clashOff: 0, clashDef: 0 }))
   }
 
-  const newPlayer = { ...settle(player, pDamage), score: player.score + pScore }
-  const newAi = { ...settle(ai, aDamage), score: ai.score + aScore }
+  const newPlayer = {
+    ...settle(state.players.player, (l) => l.playerDmg),
+    score: state.players.player.score + pScore,
+  }
+  const newAi = {
+    ...settle(state.players.ai, (l) => l.aiDmg),
+    score: state.players.ai.score + aScore,
+  }
 
   const summary = `Clash: You +${pScore}, CPU +${aScore}.`
   return {
@@ -404,30 +469,24 @@ function tickAbilities(p: PlayerState): PlayerState {
 function advanceTurn(state: GameState): GameState {
   const turn = state.turn + 1
   const base = energyForTurn(turn)
-  const refill = (p: PlayerState): PlayerState => {
+  const refill = (p: PlayerState, opp: PlayerState): PlayerState => {
     const ticked = tickAbilities(p)
     const bonus = countAbility(ticked.lineup, 'playmaker')
-    return draw({ ...ticked, energy: Math.min(MAX_ENERGY, base + bonus) }, DRAW_PER_TURN)
+    // Rally: a side trailing big draws an extra card, so games stay games.
+    const rally = p.score + RALLY_DEFICIT <= opp.score ? 1 : 0
+    return draw({ ...ticked, energy: Math.min(MAX_ENERGY, base + bonus) }, DRAW_PER_TURN + rally)
   }
-  return {
+  const next: GameState = {
     ...state,
     turn,
     phase: 'deploy',
     players: {
-      player: refill(state.players.player),
-      ai: refill(state.players.ai),
+      player: refill(state.players.player, state.players.ai),
+      ai: refill(state.players.ai, state.players.player),
     },
   }
-}
-
-export function checkWinner(state: GameState): Side | 'tie' | undefined {
-  if (state.quarter < QUARTERS) return undefined
-  // Only decided once regulation (and any OT) clock has expired.
-  if (state.gameClock > 0) return undefined
-  const p = state.players.player.score
-  const a = state.players.ai.score
-  if (p === a) return undefined // tie → overtime, handled by caller
-  return p > a ? 'player' : 'ai'
+  // CPU plays first each possession, in the open — see createInitialState.
+  return applyAiTurn(next)
 }
 
 /**
@@ -506,9 +565,9 @@ export function reducer(state: GameState, action: Action): GameState {
 
     case 'END_POSSESSION': {
       if (state.phase !== 'deploy') return state
-      // Lazily import AI to avoid a circular module reference at load time.
-      const withAi = applyAiTurn(state)
-      const resolved = resolveClash(withAi)
+      // The CPU already committed its plays at possession start, so the clash
+      // resolves exactly as the lane preview showed.
+      const resolved = resolveClash(state)
       return burnGameClock(resolved)
     }
 

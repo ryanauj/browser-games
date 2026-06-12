@@ -16,8 +16,8 @@ export type Phase = 'deploy' | 'quarterBreak' | 'gameover'
 /** Passive athlete abilities (resolved by the engine). */
 export type AbilityKey =
   | 'fastBreak' // +2 OFF when the opposing slot is empty
-  | 'clutch' // +2 OFF while your score is high
-  | 'hustle' // +1 OFF for each turn survived
+  | 'clutch' // +2 OFF in the 4th quarter and overtime
+  | 'hustle' // +1 OFF per turn survived, capped at HUSTLE_CAP
   | 'anchor' // passive wall — flavour for high DEF
   | 'wall' // flavour for high DEF
   | 'rebound' // +1 STA each turn (up to max)
@@ -30,7 +30,7 @@ export type EffectKey =
   | 'clutchGene' // +3 OFF to a target ally this clash
   | 'fastBreakEnergy' // +2 energy this turn
   | 'timeout' // restore a target ally to full stamina
-  | 'techFoul' // deal 4 damage to a target enemy athlete
+  | 'techFoul' // deal TECH_FOUL_DAMAGE to a target enemy athlete
   | 'zoneDefense' // all your athletes +2 DEF this clash
   | 'fullCourtPress' // all enemy athletes -2 OFF this clash
 
@@ -96,7 +96,7 @@ export interface GameState {
   /** PRNG cursor — advanced by the engine so randomness is reproducible. */
   rngState: number
   log: string[]
-  winner?: Side | 'tie'
+  winner?: Side
 }
 
 export type Action =

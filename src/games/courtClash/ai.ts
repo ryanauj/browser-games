@@ -7,8 +7,9 @@ import type { AthleteCard, GameState, PowerUpCard, Position } from './types'
  * plays applied for this possession. Strategy:
  *   1. Spend a Fast Break early if it unlocks an athlete it can't yet afford.
  *   2. Fill empty slots with the best-value athlete, favouring on-position fit.
- *   3. Tech Foul the opponent's biggest offensive threat.
- *   4. Full Court Press when trailing; Clutch Gene / Zone Defense with spare energy.
+ *   3. Play at most ONE trick per possession (Tech Foul > Full Court Press >
+ *      Clutch Gene > Zone Defense). The cap keeps the CPU beatable and makes
+ *      its behaviour legible — the player learns "one trick per possession".
  */
 
 const AI: 'ai' = 'ai'
@@ -95,30 +96,27 @@ export function chooseAiTurn(initial: GameState): GameState {
     state = next
   }
 
-  // 3. Tech Foul the biggest opposing threat.
+  // 3. One trick per possession, in priority order.
   const tech = hasPowerUp(state, 'techFoul')
   if (tech) {
     const threat = biggestThreat(state)
-    if (threat) state = playPowerUp(state, AI, tech.id, OPP, threat)
+    if (threat) return playPowerUp(state, AI, tech.id, OPP, threat)
   }
 
-  // 4. Full Court Press when trailing and the opponent has bodies on the floor.
   const trailing = state.players[AI].score <= state.players[OPP].score
   const oppHasBoard = POSITIONS.some((pos) => state.players[OPP].lineup[pos])
   const fcp = hasPowerUp(state, 'fullCourtPress')
-  if (fcp && trailing && oppHasBoard) state = playPowerUp(state, AI, fcp.id)
+  if (fcp && trailing && oppHasBoard) return playPowerUp(state, AI, fcp.id)
 
-  // 5. Clutch Gene on the AI's best scorer with spare energy.
   const clutch = hasPowerUp(state, 'clutchGene')
   if (clutch) {
     const slot = bestScorerSlot(state)
-    if (slot) state = playPowerUp(state, AI, clutch.id, AI, slot)
+    if (slot) return playPowerUp(state, AI, clutch.id, AI, slot)
   }
 
-  // 6. Zone Defense if the AI is fielding a real lineup.
   const zone = hasPowerUp(state, 'zoneDefense')
   const aiBodies = POSITIONS.filter((pos) => state.players[AI].lineup[pos]).length
-  if (zone && aiBodies >= 2) state = playPowerUp(state, AI, zone.id)
+  if (zone && aiBodies >= 2) return playPowerUp(state, AI, zone.id)
 
   return state
 }

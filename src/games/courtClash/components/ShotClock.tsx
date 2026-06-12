@@ -2,25 +2,33 @@ import { SHOT_CLOCK_SECONDS } from '../constants'
 
 interface Props {
   seconds: number
-  paused: boolean
-  onTogglePause: () => void
+  timed: boolean
+  onToggleTimed: () => void
 }
 
-/** Real-time shot clock with a pause toggle; turns urgent under 6 seconds. */
-export function ShotClock({ seconds, paused, onTogglePause }: Props) {
-  const urgent = seconds <= 6 && !paused
+/**
+ * Opt-in real-time shot clock. Off by default so new players can think;
+ * when on, it counts down 24s per possession and turns urgent under 6.
+ */
+export function ShotClock({ seconds, timed, onToggleTimed }: Props) {
+  const urgent = timed && seconds <= 6
   const classes = ['cc-shotclock']
   if (urgent) classes.push('cc-shotclock--urgent')
-  if (paused) classes.push('cc-shotclock--paused')
+  if (!timed) classes.push('cc-shotclock--off')
 
   return (
     <div className={classes.join(' ')}>
       <span className="cc-shotclock__label">SHOT CLOCK</span>
-      <span className="cc-shotclock__value">{paused ? '—' : seconds}</span>
-      <button type="button" className="cc-shotclock__pause" onClick={onTogglePause}>
-        {paused ? 'Resume' : 'Pause'}
+      <span className="cc-shotclock__value">{timed ? seconds : '—'}</span>
+      <button
+        type="button"
+        className="cc-shotclock__toggle"
+        onClick={onToggleTimed}
+        aria-pressed={timed}
+        title={timed ? 'Turn off the shot clock' : `Race a real ${SHOT_CLOCK_SECONDS}s clock each possession`}
+      >
+        {timed ? 'On' : 'Off'}
       </button>
-      <span className="cc-shotclock__max">/ {SHOT_CLOCK_SECONDS}s</span>
     </div>
   )
 }

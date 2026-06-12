@@ -9,9 +9,13 @@ by a hash route (e.g. `#/court-clash`).
 ## Games
 
 - **Court Clash** — a 5v5 basketball strategy card battler mixing Hearthstone-style
-  energy/turns, Clash Royale simultaneous clashes, and NBA 2K player cards. Draft a
-  lineup across five positions (PG/SG/SF/PF/C), play power-ups, beat the real-time
-  shot clock, and outscore the CPU across four quarters (with overtime on a tie).
+  energy/turns, Clash Royale lane clashes, and NBA 2K player cards. Each possession
+  the CPU coach plays first, in the open; you draft athletes into five positional
+  lanes (PG/SG/SF/PF/C), read the live lane projections, bend them with power-ups,
+  and resolve the clash. Beating the opposing DEF scores 2 (3 on a blowout), and
+  athletes grind each other's stamina down until they foul out. Outscore the CPU
+  across four quarters (overtime on a tie). Includes a how-to-play guide, staged
+  coach tips, and an optional real-time 24s shot clock — and it's mobile friendly.
 
 ## Adding a game
 
