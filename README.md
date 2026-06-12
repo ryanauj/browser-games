@@ -4,6 +4,8 @@ A small collection of browser games built with Vite + React + TypeScript. The
 landing page lists every game; each game lives in its own folder and is reached
 by a hash route (e.g. `#/court-clash`).
 
+**▶ Play online: https://ryanauj.github.io/browser-games/**
+
 ## Games
 
 - **Court Clash** — a 5v5 basketball strategy card battler mixing Hearthstone-style
