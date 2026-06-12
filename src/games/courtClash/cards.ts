@@ -90,7 +90,7 @@ export const ATHLETES: AthleteCard[] = [
     def: 3,
     sta: 4,
     ability: 'hustle',
-    abilityText: 'Hustle: +1 OFF for each turn survived.',
+    abilityText: 'Hustle: +1 OFF per turn survived (max +3).',
   },
   {
     id: 'slasher',
@@ -225,7 +225,7 @@ export const POWER_UPS: PowerUpCard[] = [
     cost: 2,
     effect: 'techFoul',
     target: 'enemy',
-    text: 'Deal 4 damage to a target enemy athlete.',
+    text: 'Deal 3 damage to a target enemy athlete.',
   },
   {
     id: 'zone-defense',
@@ -243,7 +243,7 @@ export const POWER_UPS: PowerUpCard[] = [
     cost: 2,
     effect: 'fullCourtPress',
     target: 'none',
-    text: 'All enemy athletes -2 OFF this clash.',
+    text: 'Enemy athletes on court get -2 OFF this clash.',
   },
 ]
 

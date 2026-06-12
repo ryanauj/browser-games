@@ -1,20 +1,58 @@
 import { POSITIONS } from '../constants'
+import type { LaneOutcome } from '../engine'
 import type { Lineup, Position } from '../types'
 import { PositionSlot } from './PositionSlot'
+
+/** Effective OFF/DEF per occupied slot, computed by the container. */
+export type EffMap = Partial<Record<Position, { off: number; def: number }>>
 
 interface Props {
   playerLineup: Lineup
   aiLineup: Lineup
+  playerEff: EffMap
+  aiEff: EffMap
+  lanes: LaneOutcome[]
   targetablePlayerSlots: Set<Position>
   targetableAiSlots: Set<Position>
   onPlayerSlotClick: (pos: Position) => void
   onAiSlotClick: (pos: Position) => void
 }
 
-/** The court: CPU lineup on top, your lineup on the bottom, five columns. */
+/** Centre-line chip projecting one lane's outcome if the clash ran now. */
+function LaneChip({ lane }: { lane: LaneOutcome }) {
+  const { playerPts: p, aiPts: a, playerHas, aiHas } = lane
+  let cls = 'cc-chip--idle'
+  let text = '·'
+  if (p > 0 && a > 0) {
+    cls = 'cc-chip--trade'
+    text = `+${p} / +${a}`
+  } else if (p > 0) {
+    cls = 'cc-chip--good'
+    text = `+${p}`
+  } else if (a > 0) {
+    cls = 'cc-chip--bad'
+    text = `+${a}`
+  } else if (playerHas && aiHas) {
+    cls = 'cc-chip--stop'
+    text = 'STOP'
+  }
+  const title =
+    `${lane.pos} projection — you +${p}, CPU +${a}` +
+    (lane.playerDmg || lane.aiDmg ? ` (stamina: you −${lane.playerDmg}, CPU −${lane.aiDmg})` : '')
+  return (
+    <span className={`cc-chip ${cls}`} title={title} aria-label={title}>
+      {text}
+    </span>
+  )
+}
+
+/** The court: CPU lineup on top, lane projections in the middle, you below. */
 export function Board({
   playerLineup,
   aiLineup,
+  playerEff,
+  aiEff,
+  lanes,
   targetablePlayerSlots,
   targetableAiSlots,
   onPlayerSlotClick,
@@ -29,6 +67,7 @@ export function Board({
             key={`ai-${pos}`}
             position={pos}
             athlete={aiLineup[pos]}
+            eff={aiEff[pos]}
             side="ai"
             targetable={targetableAiSlots.has(pos)}
             onClick={() => onAiSlotClick(pos)}
@@ -36,7 +75,9 @@ export function Board({
         ))}
       </div>
       <div className="cc-board__divider">
-        <span>⬤ CENTER COURT ⬤</span>
+        {lanes.map((lane) => (
+          <LaneChip key={lane.pos} lane={lane} />
+        ))}
       </div>
       <div className="cc-board__row">
         {POSITIONS.map((pos) => (
@@ -44,6 +85,7 @@ export function Board({
             key={`player-${pos}`}
             position={pos}
             athlete={playerLineup[pos]}
+            eff={playerEff[pos]}
             side="player"
             targetable={targetablePlayerSlots.has(pos)}
             onClick={() => onPlayerSlotClick(pos)}
