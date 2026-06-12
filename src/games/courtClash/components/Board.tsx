@@ -36,17 +36,24 @@ function LaneChip({ lane }: { lane: LaneOutcome }) {
     cls = 'cc-chip--stop'
     text = 'STOP'
   }
+  const foulNote = lane.playerFoul ? ' Your defender picks up a foul!' : ''
+  const cpuFoulNote = lane.aiFoul ? ' The CPU defender picks up a foul.' : ''
   const title =
-    `${lane.pos} projection — you +${p}, CPU +${a}` +
-    (lane.playerDmg || lane.aiDmg ? ` (stamina: you −${lane.playerDmg}, CPU −${lane.aiDmg})` : '')
+    `${lane.pos} projection — you +${p}, CPU +${a}.` +
+    (lane.playerDrain || lane.aiDrain
+      ? ` Stamina: you −${lane.playerDrain}, CPU −${lane.aiDrain}.`
+      : '') +
+    foulNote +
+    cpuFoulNote
   return (
     <span className={`cc-chip ${cls}`} title={title} aria-label={title}>
       {text}
+      {lane.playerFoul && <span className="cc-chip__foul">⚠</span>}
     </span>
   )
 }
 
-/** The court: CPU lineup on top, lane projections in the middle, you below. */
+/** The court: CPU five on top, lane projections in the middle, your five below. */
 export function Board({
   playerLineup,
   aiLineup,

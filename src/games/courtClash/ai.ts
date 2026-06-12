@@ -1,122 +1,125 @@
-import { POSITIONS } from './constants'
-import { playAthlete, playPowerUp, setAiStrategy } from './engine'
-import type { AthleteCard, GameState, PowerUpCard, Position } from './types'
+import { FOUL_LIMIT, POSITIONS, SUB_COST, TIRED_THRESHOLD } from './constants'
+import { computeClash, playCard, setAiStrategy, subAthlete } from './engine'
+import type { GameState, PlayCard, Position, RosterAthlete } from './types'
 
 /**
- * Greedy CPU coach. Pure: takes a state and returns a new state with the AI's
- * plays applied for this possession. Strategy:
- *   1. Spend a Fast Break early if it unlocks an athlete it can't yet afford.
- *   2. Fill empty slots with the best-value athlete, favouring on-position fit.
- *   3. Play at most ONE trick per possession (Tech Foul > Full Court Press >
- *      Clutch Gene > Zone Defense). The cap keeps the CPU beatable and makes
- *      its behaviour legible — the player learns "one trick per possession".
+ * The CPU coach. Pure: takes a state and returns a new state with the AI's
+ * moves applied for this possession. Rotation is the hard priority — energy
+ * goes to substitutions first, and at most ONE play is called with whatever
+ * is left (keeping the CPU beatable and its behaviour legible):
+ *   1. Fill any empty slot (foul-out hole) with the best bench athlete.
+ *   2. Rest the most-tired athletes and pull anyone one foul from
+ *      disqualification out of a lane that projects a foul.
+ *   3. One play: Flop > Timeout > Full Court Press > Clutch Gene > Zone.
  */
 
 const AI: 'ai' = 'ai'
-const OPP: 'player' = 'player'
 
-function aiEnergy(state: GameState): number {
+function energy(state: GameState): number {
   return state.players.ai.energy
 }
 
-function emptySlots(state: GameState): Position[] {
-  return POSITIONS.filter((pos) => state.players.ai.lineup[pos] === null)
+/** Heuristic value of a bench athlete filling a given slot. */
+function benchValue(a: RosterAthlete, slot: Position): number {
+  const fit = a.card.position === slot ? 3 : -3
+  return a.card.off + a.card.def + a.sta * 0.5 + fit
 }
 
-function athletesInHand(state: GameState): AthleteCard[] {
-  return state.players.ai.hand.filter((c): c is AthleteCard => c.kind === 'athlete')
-}
-
-function powerUpsInHand(state: GameState): PowerUpCard[] {
-  return state.players.ai.hand.filter((c): c is PowerUpCard => c.kind === 'powerup')
-}
-
-/** Heuristic value of placing a card in a slot. */
-function placementValue(card: AthleteCard, slot: Position): number {
-  const fit = card.position === slot ? 4 : -4
-  return card.off + card.def + card.sta * 0.5 + fit
-}
-
-function deployBestAthlete(state: GameState): GameState | null {
-  const energy = aiEnergy(state)
-  const slots = emptySlots(state)
-  if (slots.length === 0) return null
-
-  let best: { card: AthleteCard; slot: Position; value: number } | null = null
-  for (const card of athletesInHand(state)) {
-    if (card.cost > energy) continue
-    for (const slot of slots) {
-      const value = placementValue(card, slot)
-      if (!best || value > best.value) best = { card, slot, value }
-    }
+/** Best bench athlete for a slot who is meaningfully fresher than `minSta`. */
+function bestBenchFor(state: GameState, slot: Position, minSta: number): RosterAthlete | null {
+  let best: RosterAthlete | null = null
+  for (const a of state.players.ai.bench) {
+    if (a.sta <= minSta + 1) continue
+    if (!best || benchValue(a, slot) > benchValue(best, slot)) best = a
   }
-  if (!best) return null
-  return playAthlete(state, AI, best.card.id, best.slot)
+  return best
 }
 
-/** Slot of the opponent's highest-offense deployed athlete, if any. */
-function biggestThreat(state: GameState): Position | null {
-  let best: { slot: Position; off: number } | null = null
-  for (const pos of POSITIONS) {
-    const a = state.players[OPP].lineup[pos]
-    if (a && (!best || a.card.off > best.off)) best = { slot: pos, off: a.card.off }
-  }
-  return best && best.off >= 4 ? best.slot : null
-}
-
-/** Slot of the AI's highest-offense deployed athlete, if any. */
-function bestScorerSlot(state: GameState): Position | null {
-  let best: { slot: Position; off: number } | null = null
-  for (const pos of POSITIONS) {
-    const a = state.players[AI].lineup[pos]
-    if (a && (!best || a.card.off > best.off)) best = { slot: pos, off: a.card.off }
-  }
-  return best ? best.slot : null
-}
-
-function hasPowerUp(state: GameState, effect: PowerUpCard['effect']): PowerUpCard | undefined {
-  return powerUpsInHand(state).find((p) => p.effect === effect && p.cost <= aiEnergy(state))
+function playInHand(state: GameState, effect: PlayCard['effect']): PlayCard | undefined {
+  return state.players.ai.hand.find((c) => c.effect === effect && c.cost <= energy(state))
 }
 
 export function chooseAiTurn(initial: GameState): GameState {
   let state = initial
 
-  // 1. Fast Break energy if it unlocks an otherwise-unaffordable athlete.
-  const fb = hasPowerUp(state, 'fastBreakEnergy')
-  if (fb) {
-    const e = aiEnergy(state)
-    const unlocks = athletesInHand(state).some((c) => c.cost > e && c.cost <= e + 2)
-    if (unlocks) state = playPowerUp(state, AI, fb.id)
+  // 1. Fill empty slots first — an empty lane concedes points every clash.
+  for (const pos of POSITIONS) {
+    if (energy(state) < SUB_COST) break
+    if (state.players.ai.lineup[pos]) continue
+    const sub = bestBenchFor(state, pos, -1)
+    if (sub) state = subAthlete(state, AI, sub.uid, pos)
   }
 
-  // 2. Deploy athletes greedily until nothing is affordable/placeable.
-  for (let guard = 0; guard < 5; guard++) {
-    const next = deployBestAthlete(state)
-    if (!next || next === state) break
-    state = next
+  // 2. Rotate, most-tired first. Subbing trumps saving energy for plays —
+  //    gassed athletes bleed points and fouls every clash they stay out.
+  const tired = POSITIONS.map((pos) => ({ pos, a: state.players.ai.lineup[pos] }))
+    .filter((x): x is { pos: Position; a: RosterAthlete } => !!x.a && x.a.sta <= TIRED_THRESHOLD)
+    .sort((x, y) => x.a.sta - y.a.sta)
+  for (const { pos, a } of tired) {
+    if (energy(state) < SUB_COST) break
+    const sub = bestBenchFor(state, pos, a.sta)
+    if (sub) state = subAthlete(state, AI, sub.uid, pos)
   }
 
-  // 3. One trick per possession, in priority order.
-  const tech = hasPowerUp(state, 'techFoul')
-  if (tech) {
-    const threat = biggestThreat(state)
-    if (threat) return playPowerUp(state, AI, tech.id, OPP, threat)
+  // 2b. Protect foul trouble: pull anyone one foul from fouling out of a lane
+  //     that projects another foul on him.
+  if (energy(state) >= SUB_COST) {
+    const lanes = computeClash(state)
+    for (const lane of lanes) {
+      if (energy(state) < SUB_COST) break
+      if (!lane.aiFoul) continue
+      const a = state.players.ai.lineup[lane.pos]
+      if (!a || a.fouls < FOUL_LIMIT - 1) continue
+      const sub = bestBenchFor(state, lane.pos, -1)
+      if (sub) state = subAthlete(state, AI, sub.uid, lane.pos)
+    }
   }
 
-  const trailing = state.players[AI].score <= state.players[OPP].score
-  const oppHasBoard = POSITIONS.some((pos) => state.players[OPP].lineup[pos])
-  const fcp = hasPowerUp(state, 'fullCourtPress')
-  if (fcp && trailing && oppHasBoard) return playPowerUp(state, AI, fcp.id)
+  // 3. One play per possession with leftover energy, in priority order.
+  const lanes = computeClash(state)
 
-  const clutch = hasPowerUp(state, 'clutchGene')
+  // Flop: best when it disqualifies an opponent outright.
+  const flop = playInHand(state, 'flop')
+  if (flop) {
+    for (const pos of POSITIONS) {
+      const a = state.players.player.lineup[pos]
+      if (a && a.fouls >= FOUL_LIMIT - 1) return playCard(state, AI, flop.id, 'player', pos)
+    }
+  }
+
+  // Timeout: save a key athlete who is tired with no bench cover.
+  const timeout = playInHand(state, 'timeout')
+  if (timeout) {
+    for (const pos of POSITIONS) {
+      const a = state.players.ai.lineup[pos]
+      if (a && a.sta <= TIRED_THRESHOLD && !bestBenchFor(state, pos, a.sta)) {
+        return playCard(state, AI, timeout.id, AI, pos)
+      }
+    }
+  }
+
+  // Full Court Press when trailing.
+  const trailing = state.players.ai.score < state.players.player.score
+  const press = playInHand(state, 'fullCourtPress')
+  if (press && trailing) return playCard(state, AI, press.id)
+
+  // Clutch Gene on a contested lane the CPU is currently losing.
+  const clutch = playInHand(state, 'clutchGene')
   if (clutch) {
-    const slot = bestScorerSlot(state)
-    if (slot) return playPowerUp(state, AI, clutch.id, AI, slot)
+    for (const lane of lanes) {
+      if (lane.aiHas && lane.playerHas && lane.aiPts === 0) {
+        return playCard(state, AI, clutch.id, AI, lane.pos)
+      }
+    }
   }
 
-  const zone = hasPowerUp(state, 'zoneDefense')
-  const aiBodies = POSITIONS.filter((pos) => state.players[AI].lineup[pos]).length
-  if (zone && aiBodies >= 2) return playPowerUp(state, AI, zone.id)
+  // Zone Defense when the player projects to outscore the CPU this clash.
+  const zone = playInHand(state, 'zoneDefense')
+  if (zone) {
+    const pProj = lanes.reduce((n, l) => n + l.playerPts, 0)
+    const aProj = lanes.reduce((n, l) => n + l.aiPts, 0)
+    if (pProj > aProj) return playCard(state, AI, zone.id)
+  }
 
   return state
 }

@@ -8,14 +8,16 @@ by a hash route (e.g. `#/court-clash`).
 
 ## Games
 
-- **Court Clash** — a 5v5 basketball strategy card battler mixing Hearthstone-style
-  energy/turns, Clash Royale lane clashes, and NBA 2K player cards. Each possession
-  the CPU coach plays first, in the open; you draft athletes into five positional
-  lanes (PG/SG/SF/PF/C), read the live lane projections, bend them with power-ups,
-  and resolve the clash. Beating the opposing DEF scores 2 (3 on a blowout), and
-  athletes grind each other's stamina down until they foul out. Outscore the CPU
-  across four quarters (overtime on a tie). Includes a how-to-play guide, staged
-  coach tips, and an optional real-time 24s shot clock — and it's mobile friendly.
+- **Court Clash** — a 5v5 basketball coaching sim played as a lane battler: Clash
+  Royale clashes, Hearthstone-style play cards, NBA rotations. Both teams always
+  have five on the floor (PG/SG/SF/PF/C); each possession the CPU coach moves
+  first, in the open, and exact lane projections show who scores where. Athletes
+  burn stamina every possession — gassed players collapse, the bench recovers —
+  and defenders who get blown out pick up fouls (4 and they're gone for the
+  game). Spend coach energy on substitutions and playbook calls, out-rotate the
+  CPU across four quarters, and survive sudden-death overtime on a tie. Includes
+  a how-to-play guide, staged coach tips, and an optional real-time 24s shot
+  clock — and it's mobile friendly.
 
 ## Adding a game
 

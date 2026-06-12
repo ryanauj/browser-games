@@ -1,15 +1,15 @@
-import type { Card } from '../types'
+import type { PlayCard } from '../types'
 
 interface Props {
-  card: Card
+  card: PlayCard
   onClick?: () => void
   selected?: boolean
   disabled?: boolean
 }
 
-/** A card as it appears in hand: athlete ratings or power-up text. */
+/** A play card as it appears in the coach's hand. */
 export function CardView({ card, onClick, selected, disabled }: Props) {
-  const classes = ['cc-card', `cc-card--${card.kind}`]
+  const classes = ['cc-card', 'cc-card--play']
   if (selected) classes.push('cc-card--selected')
   if (disabled) classes.push('cc-card--disabled')
 
@@ -23,19 +23,7 @@ export function CardView({ card, onClick, selected, disabled }: Props) {
     >
       <span className="cc-card__cost">{card.cost}</span>
       <span className="cc-card__name">{card.name}</span>
-      {card.kind === 'athlete' ? (
-        <>
-          <span className="cc-card__pos">{card.position}</span>
-          <span className="cc-card__stats">
-            <span title="Offense">⚡{card.off}</span>
-            <span title="Defense">🛡{card.def}</span>
-            <span title="Stamina">❤{card.sta}</span>
-          </span>
-          {card.abilityText && <span className="cc-card__ability">{card.abilityText}</span>}
-        </>
-      ) : (
-        <span className="cc-card__text">{card.text}</span>
-      )}
+      <span className="cc-card__text">{card.text}</span>
     </button>
   )
 }

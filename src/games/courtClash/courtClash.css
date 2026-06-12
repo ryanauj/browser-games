@@ -334,6 +334,10 @@
   color: var(--cc-dim);
   border-color: var(--cc-line);
 }
+.cc-chip__foul {
+  margin-left: 2px;
+  color: #ffd76a;
+}
 
 /* Slot ----------------------------------------------------------------- */
 .cc-slot {
@@ -424,8 +428,40 @@
 .cc-fit--bad {
   color: var(--cc-bad);
 }
+.cc-slot__meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.cc-slot__gassed {
+  color: var(--cc-bad);
+  font-size: clamp(0.5rem, 1.9vw, 0.62rem);
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  animation: cc-pulse 1s infinite;
+}
+.cc-slot--gassed {
+  border-color: rgba(255, 107, 107, 0.7);
+}
 
-/* Hand & cards --------------------------------------------------------- */
+/* Sideline: bench + playbook -------------------------------------------- */
+.cc__sideline {
+  margin-top: 12px;
+  padding: 8px 2px calc(6px + env(safe-area-inset-bottom));
+  border-top: 1px solid var(--cc-line);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.cc__sideline-label {
+  font-size: 0.68rem;
+  letter-spacing: 0.18em;
+  color: var(--cc-dim);
+  font-weight: 800;
+  margin-bottom: 4px;
+}
+.cc-bench,
 .cc-hand {
   display: flex;
   gap: 8px;
@@ -433,23 +469,20 @@
   overflow-x: auto;
   -webkit-overflow-scrolling: touch;
   scroll-snap-type: x proximity;
-  margin-top: 12px;
-  padding: 10px 2px calc(6px + env(safe-area-inset-bottom));
-  border-top: 1px solid var(--cc-line);
-  min-height: 132px;
-  position: sticky;
-  bottom: 0;
-  background: linear-gradient(rgba(10, 16, 32, 0), #0a1020 18%);
+  padding: 4px 2px 6px;
 }
+.cc-bench--empty,
 .cc-hand--empty {
   color: var(--cc-dim);
+  font-size: 0.85rem;
   align-items: center;
+  min-height: 40px;
 }
 .cc-card {
   flex: 0 0 auto;
   scroll-snap-align: start;
-  width: 124px;
-  min-height: 120px;
+  width: 132px;
+  min-height: 104px;
   background: var(--cc-panel);
   border: 2px solid var(--cc-line);
   border-radius: 10px;
@@ -469,12 +502,13 @@
   transform: translateY(-3px);
   border-color: var(--cc-orange);
 }
-.cc-card--athlete {
+.cc-card--bench {
   background: linear-gradient(var(--cc-panel), #122036);
 }
-.cc-card--powerup {
+.cc-card--play {
   background: linear-gradient(#2a1d3e, #1c1530);
   border-color: #4a3a6b;
+  min-height: 88px;
 }
 .cc-card--selected {
   border-color: var(--cc-orange);
@@ -518,11 +552,39 @@
   font-size: 0.8rem;
   font-variant-numeric: tabular-nums;
 }
+.cc-card__meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 14px;
+}
+.cc-card__resting {
+  font-size: 0.62rem;
+  font-weight: 700;
+  color: var(--cc-good);
+}
 .cc-card__ability,
 .cc-card__text {
   font-size: 0.66rem;
   color: var(--cc-dim);
   line-height: 1.25;
+}
+
+/* Foul dots -------------------------------------------------------------- */
+.cc-fouls {
+  display: inline-flex;
+  gap: 3px;
+  align-items: center;
+}
+.cc-fouls__dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  border: 1px solid var(--cc-dim);
+}
+.cc-fouls__dot--on {
+  background: var(--cc-bad);
+  border-color: var(--cc-bad);
 }
 
 /* Play-by-play --------------------------------------------------------- */

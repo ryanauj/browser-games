@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { POSITIONS, QUARTERS } from './constants'
+import { POSITIONS, QUARTERS, SUB_COST } from './constants'
 import { computeClash, effectiveDef, effectiveOff } from './engine'
 import { useCourtClash } from './useCourtClash'
-import type { Card, PlayerState, Position } from './types'
+import type { PlayerState, Position } from './types'
+import { Bench } from './components/Bench'
 import { Board, type EffMap } from './components/Board'
 import { EnergyBar } from './components/EnergyBar'
 import { GameLog } from './components/GameLog'
@@ -34,12 +35,14 @@ function writeStored(key: string, value: string): void {
 
 /** Staged first-game tips. Stage advances with play; ✕ dismisses for good. */
 const COACH_TIPS = [
-  'Tap an athlete card below, then a glowing slot. Matching its position (PG → PG) gives +2 OFF and +2 DEF.',
-  'The chips on the centre line project each lane: green = you score, red = the CPU scores. Happy? Press Resolve Clash ▶.',
-  'Purple cards are power-ups. A Clutch Gene or Zone Defense can flip a losing lane before you resolve.',
-  'Athletes wear down: stamina (❤) drops by the attacker’s OFF minus your DEF each clash. At 0 they foul out.',
+  'Your five are already out there. The chips on the centre line project each lane: green = you score, red = the CPU.',
+  `Stamina (❤) burns every possession. Tap a bench player, then a court slot, to sub them in (${SUB_COST}⚡) before anyone gasses out.`,
+  'A ⚠ chip means your defender will pick up a foul — 3 and he’s gone for the game. Sub him out, or shore up the lane with a play card.',
+  'Purple cards are your playbook: a Timeout rests a star in place, Zone Defense can flip several lanes at once.',
 ] as const
 const COACH_DONE = COACH_TIPS.length
+
+type Selection = { kind: 'play'; id: string } | { kind: 'bench'; uid: string } | null
 
 export default function CourtClash() {
   const game = useCourtClash()
@@ -47,10 +50,14 @@ export default function CourtClash() {
   const player = state.players.player
   const ai = state.players.ai
 
-  const [selectedId, setSelectedId] = useState<string | null>(null)
-  const selected: Card | undefined = useMemo(
-    () => player.hand.find((c) => c.id === selectedId),
-    [player.hand, selectedId],
+  const [selection, setSelection] = useState<Selection>(null)
+  const selectedPlay = useMemo(
+    () => (selection?.kind === 'play' ? player.hand.find((c) => c.id === selection.id) : undefined),
+    [player.hand, selection],
+  )
+  const selectedBench = useMemo(
+    () => (selection?.kind === 'bench' ? player.bench.find((a) => a.uid === selection.uid) : undefined),
+    [player.bench, selection],
   )
 
   // Onboarding: auto-open the guide on first visit; hold the clock while open.
@@ -75,28 +82,26 @@ export default function CourtClash() {
       return next
     })
   }, [])
-  const playerHasAthlete = POSITIONS.some((pos) => player.lineup[pos] !== null)
   useEffect(() => {
-    if (coachStage === 0 && playerHasAthlete) advanceCoach(1)
-  }, [coachStage, playerHasAthlete, advanceCoach])
-  useEffect(() => {
-    if (coachStage === 1 && state.turn > 1) advanceCoach(2)
-    if (coachStage === 2 && state.turn > 2) advanceCoach(3)
-    if (coachStage === 3 && state.turn > 4) advanceCoach(COACH_DONE)
+    if (coachStage === 0 && state.turn > 1) advanceCoach(1)
+    if (coachStage === 1 && state.turn > 3) advanceCoach(2)
+    if (coachStage === 2 && state.turn > 5) advanceCoach(3)
+    if (coachStage === 3 && state.turn > 8) advanceCoach(COACH_DONE)
   }, [coachStage, state.turn, advanceCoach])
 
-  // Drop a stale selection when the card leaves hand or the turn changes.
+  // Drop a stale selection when the item leaves hand/bench or the turn changes.
   useEffect(() => {
-    if (selectedId && !player.hand.some((c) => c.id === selectedId)) setSelectedId(null)
-  }, [player.hand, selectedId])
+    if (selection?.kind === 'play' && !player.hand.some((c) => c.id === selection.id)) setSelection(null)
+    if (selection?.kind === 'bench' && !player.bench.some((a) => a.uid === selection.uid)) setSelection(null)
+  }, [player.hand, player.bench, selection])
   useEffect(() => {
-    setSelectedId(null)
+    setSelection(null)
   }, [state.turn, state.quarter, state.phase])
 
   const interactive = state.phase === 'deploy' && !resolving && !helpOpen
 
-  // Live lane projections + effective stats. Exact, because the CPU has
-  // already committed its plays for this possession.
+  // Live lane projections + effective stats. Exact, because the CPU coach has
+  // already committed its moves for this possession.
   const lanes = useMemo(() => computeClash(state), [state])
   const lateGame = state.quarter >= QUARTERS
   const effFor = (own: PlayerState, opp: PlayerState): EffMap => {
@@ -105,8 +110,8 @@ export default function CourtClash() {
       const a = own.lineup[pos]
       if (a) {
         map[pos] = {
-          off: effectiveOff(a, own, opp.lineup[pos] === null, lateGame),
-          def: effectiveDef(a),
+          off: effectiveOff(a, pos, own, opp.lineup[pos], lateGame),
+          def: effectiveDef(a, pos),
         }
       }
     }
@@ -115,72 +120,71 @@ export default function CourtClash() {
   const playerEff = useMemo(() => effFor(player, ai), [player, ai, lateGame])
   const aiEff = useMemo(() => effFor(ai, player), [player, ai, lateGame])
 
-  // Which slots light up depends on the selected card.
+  // Which slots light up depends on the selection.
   const { targetablePlayerSlots, targetableAiSlots } = useMemo(() => {
     const pSlots = new Set<Position>()
     const aSlots = new Set<Position>()
-    if (interactive && selected) {
-      if (selected.kind === 'athlete') {
-        POSITIONS.forEach((pos) => {
-          if (!player.lineup[pos]) pSlots.add(pos)
-        })
-      } else if (selected.target === 'ally') {
+    if (interactive && selectedBench) {
+      POSITIONS.forEach((pos) => pSlots.add(pos)) // sub into any slot
+    } else if (interactive && selectedPlay) {
+      if (selectedPlay.target === 'ally') {
         POSITIONS.forEach((pos) => {
           if (player.lineup[pos]) pSlots.add(pos)
         })
-      } else if (selected.target === 'enemy') {
+      } else if (selectedPlay.target === 'enemy') {
         POSITIONS.forEach((pos) => {
           if (ai.lineup[pos]) aSlots.add(pos)
         })
       }
     }
     return { targetablePlayerSlots: pSlots, targetableAiSlots: aSlots }
-  }, [interactive, selected, player.lineup, ai.lineup])
+  }, [interactive, selectedBench, selectedPlay, player.lineup, ai.lineup])
 
-  const handleSelect = (cardId: string) => {
+  const handleSelectPlay = (cardId: string) => {
     const card = player.hand.find((c) => c.id === cardId)
     if (!card) return
-    // Self / no-target power-ups fire immediately.
-    if (card.kind === 'powerup' && (card.target === 'self' || card.target === 'none')) {
-      game.playPowerUp(card.id)
-      setSelectedId(null)
+    // Self / no-target plays fire immediately.
+    if (card.target === 'self' || card.target === 'none') {
+      game.playCard(card.id)
+      setSelection(null)
       return
     }
-    setSelectedId((cur) => (cur === cardId ? null : cardId))
+    setSelection((cur) => (cur?.kind === 'play' && cur.id === cardId ? null : { kind: 'play', id: cardId }))
+  }
+
+  const handleSelectBench = (uid: string) => {
+    setSelection((cur) => (cur?.kind === 'bench' && cur.uid === uid ? null : { kind: 'bench', uid }))
   }
 
   const handlePlayerSlot = (pos: Position) => {
-    if (!selected) return
-    if (selected.kind === 'athlete' && !player.lineup[pos]) {
-      game.playAthlete(selected.id, pos)
-    } else if (selected.kind === 'powerup' && selected.target === 'ally' && player.lineup[pos]) {
-      game.playPowerUp(selected.id, 'player', pos)
+    if (selectedBench) {
+      game.sub(selectedBench.uid, pos)
+    } else if (selectedPlay && selectedPlay.target === 'ally' && player.lineup[pos]) {
+      game.playCard(selectedPlay.id, 'player', pos)
     }
-    setSelectedId(null)
+    setSelection(null)
   }
 
   const handleAiSlot = (pos: Position) => {
-    if (selected?.kind === 'powerup' && selected.target === 'enemy' && ai.lineup[pos]) {
-      game.playPowerUp(selected.id, 'ai', pos)
-      setSelectedId(null)
+    if (selectedPlay?.target === 'enemy' && ai.lineup[pos]) {
+      game.playCard(selectedPlay.id, 'ai', pos)
+      setSelection(null)
     }
   }
 
-  const selectionHint = selected
-    ? selected.kind === 'athlete'
-      ? selected.position && player.lineup[selected.position] === null
-        ? `Pick a glowing slot — ${selected.position} is its natural spot.`
-        : 'Pick a glowing slot to deploy.'
-      : selected.target === 'ally'
+  const selectionHint = selectedBench
+    ? `Pick a slot for ${selectedBench.card.name} — ${selectedBench.card.position} is his natural spot.`
+    : selectedPlay
+      ? selectedPlay.target === 'ally'
         ? 'Pick one of your athletes.'
-        : selected.target === 'enemy'
+        : selectedPlay.target === 'enemy'
           ? 'Pick an opposing athlete.'
           : ''
-    : ''
+      : ''
   const coachTip = coachStage < COACH_DONE ? COACH_TIPS[coachStage] : null
   const hint = !interactive
     ? ''
-    : selectionHint || coachTip || 'Play cards, check the lane chips, then resolve.'
+    : selectionHint || coachTip || 'Make subs, call plays, check the lane chips, then resolve.'
 
   return (
     <div className="cc">
@@ -257,7 +261,26 @@ export default function CourtClash() {
         <GameLog lines={state.log} />
       </div>
 
-      <Hand cards={player.hand} energy={player.energy} selectedId={selectedId} onSelect={handleSelect} />
+      <div className="cc__sideline">
+        <div className="cc__sideline-section">
+          <div className="cc__sideline-label">BENCH</div>
+          <Bench
+            bench={player.bench}
+            energy={player.energy}
+            selectedUid={selection?.kind === 'bench' ? selection.uid : null}
+            onSelect={handleSelectBench}
+          />
+        </div>
+        <div className="cc__sideline-section">
+          <div className="cc__sideline-label">PLAYBOOK</div>
+          <Hand
+            cards={player.hand}
+            energy={player.energy}
+            selectedId={selection?.kind === 'play' ? selection.id : null}
+            onSelect={handleSelectPlay}
+          />
+        </div>
+      </div>
 
       {helpOpen && <HelpModal onClose={closeHelp} />}
 
