@@ -19,9 +19,9 @@ export const GAMES: GameEntry[] = [
   {
     id: 'court-clash',
     title: 'Court Clash',
-    tagline: '5v5 basketball strategy card battler',
+    tagline: 'Coach a 5v5 basketball card battler',
     description:
-      'Draft athlete cards into five positional lanes against a CPU coach who plays first, in the open. Read the live lane projections, bend them with power-ups, and resolve the clash — outscore the CPU across four quarters. Optional real-time shot clock for extra pressure.',
+      'You are the coach: five on the floor at all times, a bench to rotate, and a playbook to call. Manage stamina and foul trouble, read the live lane projections, and out-rotate the CPU coach across four quarters. Optional real-time shot clock for extra pressure.',
     Component: CourtClash,
   },
 ]

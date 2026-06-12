@@ -79,13 +79,13 @@ export function useCourtClash() {
     setTimed,
     setHold,
     resolving,
-    playAthlete: useCallback(
-      (cardId: string, slot: Position) => dispatch({ type: 'PLAY_ATHLETE', cardId, slot }),
+    playCard: useCallback(
+      (cardId: string, targetSide?: Side, targetSlot?: Position) =>
+        dispatch({ type: 'PLAY_CARD', cardId, targetSide, targetSlot }),
       [],
     ),
-    playPowerUp: useCallback(
-      (cardId: string, targetSide?: Side, targetSlot?: Position) =>
-        dispatch({ type: 'PLAY_POWERUP', cardId, targetSide, targetSlot }),
+    sub: useCallback(
+      (benchUid: string, slot: Position) => dispatch({ type: 'SUB', benchUid, slot }),
       [],
     ),
     endPossession,

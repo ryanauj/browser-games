@@ -4,7 +4,7 @@ export type Position = 'PG' | 'SG' | 'SF' | 'PF' | 'C'
 export type Side = 'player' | 'ai'
 
 /**
- * deploy       — player is making plays under the shot clock
+ * deploy       — the coach is making subs/plays under the shot clock
  * quarterBreak  — the game clock hit 0:00; waiting to tip off the next quarter
  * gameover      — a winner has been decided
  *
@@ -15,31 +15,30 @@ export type Phase = 'deploy' | 'quarterBreak' | 'gameover'
 
 /** Passive athlete abilities (resolved by the engine). */
 export type AbilityKey =
-  | 'fastBreak' // +2 OFF when the opposing slot is empty
+  | 'fastBreak' // +2 OFF against a tired defender (STA ≤ 2)
   | 'clutch' // +2 OFF in the 4th quarter and overtime
-  | 'hustle' // +1 OFF per turn survived, capped at HUSTLE_CAP
+  | 'hustle' // +1 OFF per possession on court (max HUSTLE_CAP); resets on sub
   | 'anchor' // passive wall — flavour for high DEF
   | 'wall' // flavour for high DEF
-  | 'rebound' // +1 STA each turn (up to max)
-  | 'iron' // survives the first foul-out at 1 STA
-  | 'playmaker' // +1 energy next turn while on court
+  | 'rebound' // recovers 1 STA per possession on court (cancels base fatigue)
+  | 'iron' // the first time he would gas out, holds at 1 STA
+  | 'playmaker' // +1 coach energy each possession while on court
   | 'takeover' // +1 OFF to allied lanes
 
-/** One-shot power-up effects. */
+/** One-shot play-card effects (the coach's playbook). */
 export type EffectKey =
   | 'clutchGene' // +3 OFF to a target ally this clash
-  | 'fastBreakEnergy' // +2 energy this turn
-  | 'timeout' // restore a target ally to full stamina
-  | 'techFoul' // deal TECH_FOUL_DAMAGE to a target enemy athlete
+  | 'fastBreakEnergy' // +2 coach energy this possession
+  | 'timeout' // restore 3 STA to a target ally
+  | 'flop' // a target enemy athlete picks up a foul
   | 'zoneDefense' // all your athletes +2 DEF this clash
-  | 'fullCourtPress' // all enemy athletes -2 OFF this clash
+  | 'fullCourtPress' // enemy athletes on court -2 OFF this clash
 
 export interface AthleteCard {
   id: string
   name: string
   kind: 'athlete'
   position: Position
-  cost: number
   off: number
   def: number
   sta: number
@@ -47,40 +46,45 @@ export interface AthleteCard {
   abilityText?: string
 }
 
-export interface PowerUpCard {
+export interface PlayCard {
   id: string
   name: string
-  kind: 'powerup'
+  kind: 'play'
   cost: number
   effect: EffectKey
   target: 'ally' | 'enemy' | 'self' | 'none'
   text: string
 }
 
-export type Card = AthleteCard | PowerUpCard
-
-/** An athlete deployed on the court. */
-export interface BoardAthlete {
-  /** Unique per deployed instance (so duplicates of a card are distinct). */
+/**
+ * One athlete on a roster, on court or on the bench. Stamina and fouls
+ * persist across substitutions; heat (hustle) resets when benched.
+ */
+export interface RosterAthlete {
+  /** Unique per roster instance (so mirrored archetypes are distinct). */
   uid: string
   card: AthleteCard
-  slot: Position
   sta: number
-  turnsSurvived: number
-  /** One-shot OFF/DEF buffs applied by power-ups, cleared after each clash. */
+  fouls: number
+  /** Possessions on court since last sub (drives Hustle). */
+  heat: number
+  /** One-shot OFF/DEF buffs applied by plays, cleared after each clash. */
   clashOff: number
   clashDef: number
   /** Whether the Iron save has already been used. */
   ironUsed: boolean
 }
 
-export type Lineup = Record<Position, BoardAthlete | null>
+export type Lineup = Record<Position, RosterAthlete | null>
 
 export interface PlayerState {
   side: Side
-  deck: Card[]
-  hand: Card[]
+  /** Play-card draw pile and hand (the coach's playbook). */
+  deck: PlayCard[]
+  hand: PlayCard[]
   lineup: Lineup
+  /** Reserves, recovering stamina. Fouled-out athletes leave the roster. */
+  bench: RosterAthlete[]
   energy: number
   score: number
 }
@@ -100,8 +104,8 @@ export interface GameState {
 }
 
 export type Action =
-  | { type: 'PLAY_ATHLETE'; cardId: string; slot: Position }
-  | { type: 'PLAY_POWERUP'; cardId: string; targetSide?: Side; targetSlot?: Position }
+  | { type: 'SUB'; benchUid: string; slot: Position }
+  | { type: 'PLAY_CARD'; cardId: string; targetSide?: Side; targetSlot?: Position }
   | { type: 'END_POSSESSION' }
   | { type: 'ADVANCE_QUARTER' }
   | { type: 'NEW_GAME'; seed?: number }

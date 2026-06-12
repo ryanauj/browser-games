@@ -1,17 +1,17 @@
-import type { Card } from '../types'
+import type { PlayCard } from '../types'
 import { CardView } from './CardView'
 
 interface Props {
-  cards: Card[]
+  cards: PlayCard[]
   energy: number
   selectedId: string | null
   onSelect: (cardId: string) => void
 }
 
-/** The player's hand. Unaffordable cards are dimmed and unselectable. */
+/** The coach's playbook hand. Unaffordable plays are dimmed. */
 export function Hand({ cards, energy, selectedId, onSelect }: Props) {
   if (cards.length === 0) {
-    return <div className="cc-hand cc-hand--empty">No cards in hand.</div>
+    return <div className="cc-hand cc-hand--empty">No plays in hand.</div>
   }
   return (
     <div className="cc-hand">
