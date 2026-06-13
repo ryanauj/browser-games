@@ -176,6 +176,12 @@ function resolveScreens(players: Player[]): void {
     for (const d of players) {
       if (d.side === s.side) continue
       if (dist(d.pos, s.pos) > SCREEN_RADIUS) continue
+      // The screener's own man is behind the pick — a screen springs a teammate
+      // by impeding *their* defender, not the one already guarding the screener.
+      const guardsScreener =
+        (d.order.kind === 'guard' || d.order.kind === 'double' || d.order.kind === 'steal') &&
+        d.order.markId === s.id
+      if (guardsScreener) continue
       // A clean connect always sticks for SCREEN_BASE beats; a strong screener
       // against a less-quick defender holds them an extra beat (up to SCREEN_MAX).
       const quickness = (d.attr.speed + d.attr.perimeterD) / 2

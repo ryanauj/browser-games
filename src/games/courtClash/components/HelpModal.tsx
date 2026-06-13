@@ -17,8 +17,10 @@ export function HelpModal({ onClose }: Props) {
         <ol className="cc-help__steps">
           <li>
             <strong>Orchestrate the floor.</strong> Half-court 5v5. You direct all five of
-            your players, beat by beat. <em>Tap</em> a player for the action menu, or{' '}
-            <em>drag</em> from a player to draw a route. Set as many orders as you like,
+            your players, beat by beat. <em>Drag</em> a player onto a spot or another
+            player and a quick action wheel pops up — Move, Screen, Pass, Guard and
+            so on, depending on where you drop. Or <em>tap</em> a player for the same
+            actions as a menu. Set as many orders as you like,
             then press <em>Run Beat ▶</em> to advance time ~1 second and watch it play out.
             Orders persist until you change them, so you only touch who you want. Tap any
             player — yours or the CPU's — to scout their ratings: each badge shows a
