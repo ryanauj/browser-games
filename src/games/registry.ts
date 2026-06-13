@@ -19,9 +19,9 @@ export const GAMES: GameEntry[] = [
   {
     id: 'court-clash',
     title: 'Court Clash',
-    tagline: 'Coach a 5v5 basketball card battler',
+    tagline: 'Be the floor general in half-court 5v5',
     description:
-      'You are the coach: five on the floor at all times, a bench to rotate, and a playbook to call. Manage stamina and foul trouble, read the live lane projections, and out-rotate the CPU coach across four quarters. Optional real-time shot clock for extra pressure.',
+      'Real-time, beat-by-beat half-court hoops. You direct all five of your players — call screens, cuts, drives and passes on offense, switch, double and help on defense — and the outcome turns on how open you get the floor. Read the risk glow, ride your stamina, and beat the CPU first to 15.',
     Component: CourtClash,
   },
 ]

@@ -1,21 +1,16 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { POSITIONS, QUARTERS, SUB_COST } from './constants'
-import { computeClash, effectiveDef, effectiveOff } from './engine'
+import { BASKET, WIN_TARGET, riskOf, type Risk } from './constants'
+import { passStealChance, shotMakeChance } from './engine'
 import { useCourtClash } from './useCourtClash'
-import type { PlayerState, Position } from './types'
-import { Bench } from './components/Bench'
-import { Board, type EffMap } from './components/Board'
-import { EnergyBar } from './components/EnergyBar'
+import type { Order, Side, Vec } from './types'
+import { Court } from './components/Court'
 import { GameLog } from './components/GameLog'
 import { GameOverModal } from './components/GameOverModal'
-import { Hand } from './components/Hand'
 import { HelpModal } from './components/HelpModal'
-import { Scoreboard } from './components/Scoreboard'
-import { ShotClock } from './components/ShotClock'
 import './courtClash.css'
 
 const HELP_SEEN_KEY = 'courtclash-help-seen'
-const COACH_KEY = 'courtclash-coach'
+const YOU: Side = 'player'
 
 function readStored(key: string): string | null {
   try {
@@ -24,167 +19,178 @@ function readStored(key: string): string | null {
     return null
   }
 }
-
 function writeStored(key: string, value: string): void {
   try {
     localStorage.setItem(key, value)
   } catch {
-    // storage unavailable — onboarding just repeats next visit
+    /* storage unavailable — onboarding just repeats */
   }
 }
 
-/** Staged first-game tips. Stage advances with play; ✕ dismisses for good. */
-const COACH_TIPS = [
-  'Your five are already out there. The chips on the centre line project each lane: green = you score, red = the CPU.',
-  `Stamina (❤) burns every possession. Tap a bench player, then a court slot, to sub them in (${SUB_COST}⚡) before anyone gasses out.`,
-  'A ⚠ chip means your defender will pick up a foul — 3 and he’s gone for the game. Sub him out, or shore up the lane with a play card.',
-  'Purple cards are your playbook: a Timeout rests a star in place, Zone Defense can flip several lanes at once.',
-] as const
-const COACH_DONE = COACH_TIPS.length
-
-type Selection = { kind: 'play'; id: string } | { kind: 'bench'; uid: string } | null
+/** What a queued order is still waiting on. */
+type Pending =
+  | null
+  | { playerId: string; need: 'point'; make: (pt: Vec) => Order; hint: string }
+  | { playerId: string; need: 'teammate' | 'enemy'; make: (id: string) => Order; hint: string; risk?: 'pass' }
 
 export default function CourtClash() {
   const game = useCourtClash()
-  const { state, resolving } = game
-  const player = state.players.player
-  const ai = state.players.ai
+  const { state, animating } = game
+  const onOffense = state.offense === YOU
 
-  const [selection, setSelection] = useState<Selection>(null)
-  const selectedPlay = useMemo(
-    () => (selection?.kind === 'play' ? player.hand.find((c) => c.id === selection.id) : undefined),
-    [player.hand, selection],
-  )
-  const selectedBench = useMemo(
-    () => (selection?.kind === 'bench' ? player.bench.find((a) => a.uid === selection.uid) : undefined),
-    [player.bench, selection],
-  )
+  const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [pending, setPending] = useState<Pending>(null)
+  const [flash, setFlash] = useState<{ text: string; tone: Risk | 'neutral' } | null>(null)
 
-  // Onboarding: auto-open the guide on first visit; hold the clock while open.
   const [helpOpen, setHelpOpen] = useState(() => readStored(HELP_SEEN_KEY) !== '1')
-  useEffect(() => {
-    game.setHold(helpOpen)
-  }, [helpOpen, game.setHold])
   const closeHelp = useCallback(() => {
     writeStored(HELP_SEEN_KEY, '1')
     setHelpOpen(false)
   }, [])
 
-  // Coach tips: one short staged hint at a time during the first games.
-  const [coachStage, setCoachStage] = useState(() => {
-    const n = Number(readStored(COACH_KEY) ?? '0')
-    return Number.isFinite(n) ? Math.min(Math.max(n, 0), COACH_DONE) : 0
-  })
-  const advanceCoach = useCallback((to: number) => {
-    setCoachStage((cur) => {
-      const next = Math.max(cur, Math.min(to, COACH_DONE))
-      if (next !== cur) writeStored(COACH_KEY, String(next))
-      return next
-    })
-  }, [])
-  useEffect(() => {
-    if (coachStage === 0 && state.turn > 1) advanceCoach(1)
-    if (coachStage === 1 && state.turn > 3) advanceCoach(2)
-    if (coachStage === 2 && state.turn > 5) advanceCoach(3)
-    if (coachStage === 3 && state.turn > 8) advanceCoach(COACH_DONE)
-  }, [coachStage, state.turn, advanceCoach])
+  const yourPlayers = useMemo(() => state.players.filter((p) => p.side === YOU), [state.players])
+  const byId = useCallback((id: string | null) => state.players.find((p) => p.id === id), [state.players])
+  const ballHandler = byId(state.ballHandlerId)
+  const selected = byId(selectedId)
 
-  // Drop a stale selection when the item leaves hand/bench or the turn changes.
+  // Clear selection/targeting whenever the possession or beat advances.
   useEffect(() => {
-    if (selection?.kind === 'play' && !player.hand.some((c) => c.id === selection.id)) setSelection(null)
-    if (selection?.kind === 'bench' && !player.bench.some((a) => a.uid === selection.uid)) setSelection(null)
-  }, [player.hand, player.bench, selection])
+    setSelectedId(null)
+    setPending(null)
+  }, [state.possession, state.beat, state.phase])
+
+  // Surface the latest beat event as a brief flash.
   useEffect(() => {
-    setSelection(null)
-  }, [state.turn, state.quarter, state.phase])
+    const ev = state.events[state.events.length - 1]
+    if (!ev) return
+    const tone: Risk | 'neutral' =
+      ev.kind === 'shotMake'
+        ? 'good'
+        : ev.kind === 'block' || ev.kind === 'steal' || ev.kind === 'turnover' || ev.kind === 'shotclock'
+          ? 'bad'
+          : 'neutral'
+    const text = ev.kind === 'shotMake' ? `+${ev.points}!` : ev.text
+    setFlash({ text, tone })
+    const t = window.setTimeout(() => setFlash(null), 1100)
+    return () => window.clearTimeout(t)
+  }, [state.events])
 
-  const interactive = state.phase === 'deploy' && !resolving && !helpOpen
+  // --- Risk glow inputs ----------------------------------------------------
+  const shooterRisk: Risk | null = useMemo(() => {
+    if (!onOffense || !ballHandler || ballHandler.side !== YOU) return null
+    return riskOf(shotMakeChance(state.players, ballHandler))
+  }, [onOffense, ballHandler, state.players])
 
-  // Live lane projections + effective stats. Exact, because the CPU coach has
-  // already committed its moves for this possession.
-  const lanes = useMemo(() => computeClash(state), [state])
-  const lateGame = state.quarter >= QUARTERS
-  const effFor = (own: PlayerState, opp: PlayerState): EffMap => {
-    const map: EffMap = {}
-    for (const pos of POSITIONS) {
-      const a = own.lineup[pos]
-      if (a) {
-        map[pos] = {
-          off: effectiveOff(a, pos, own, opp.lineup[pos], lateGame),
-          def: effectiveDef(a, pos),
+  const targetable = useMemo(() => {
+    const set = new Set<string>()
+    if (!pending) return set
+    if (pending.need === 'teammate') yourPlayers.forEach((p) => p.id !== pending.playerId && set.add(p.id))
+    else if (pending.need === 'enemy') state.players.forEach((p) => p.side !== YOU && set.add(p.id))
+    return set
+  }, [pending, yourPlayers, state.players])
+
+  const targetRisk = useMemo(() => {
+    const map: Record<string, Risk> = {}
+    if (pending?.need === 'teammate' && pending.risk === 'pass') {
+      const passer = byId(pending.playerId)
+      if (passer) {
+        for (const mate of yourPlayers) {
+          if (mate.id === passer.id) continue
+          const { p } = passStealChance(state.players, passer, mate)
+          map[mate.id] = riskOf(1 - p)
         }
       }
     }
     return map
+  }, [pending, byId, yourPlayers, state.players])
+
+  // --- Interaction ---------------------------------------------------------
+  const issue = (playerId: string, order: Order) => {
+    game.setOrder(playerId, order)
+    setSelectedId(null)
+    setPending(null)
   }
-  const playerEff = useMemo(() => effFor(player, ai), [player, ai, lateGame])
-  const aiEff = useMemo(() => effFor(ai, player), [player, ai, lateGame])
 
-  // Which slots light up depends on the selection.
-  const { targetablePlayerSlots, targetableAiSlots } = useMemo(() => {
-    const pSlots = new Set<Position>()
-    const aSlots = new Set<Position>()
-    if (interactive && selectedBench) {
-      POSITIONS.forEach((pos) => pSlots.add(pos)) // sub into any slot
-    } else if (interactive && selectedPlay) {
-      if (selectedPlay.target === 'ally') {
-        POSITIONS.forEach((pos) => {
-          if (player.lineup[pos]) pSlots.add(pos)
-        })
-      } else if (selectedPlay.target === 'enemy') {
-        POSITIONS.forEach((pos) => {
-          if (ai.lineup[pos]) aSlots.add(pos)
-        })
-      }
-    }
-    return { targetablePlayerSlots: pSlots, targetableAiSlots: aSlots }
-  }, [interactive, selectedBench, selectedPlay, player.lineup, ai.lineup])
-
-  const handleSelectPlay = (cardId: string) => {
-    const card = player.hand.find((c) => c.id === cardId)
-    if (!card) return
-    // Self / no-target plays fire immediately.
-    if (card.target === 'self' || card.target === 'none') {
-      game.playCard(card.id)
-      setSelection(null)
+  const onPlayerTap = (id: string) => {
+    const p = byId(id)
+    if (!p) return
+    if (pending) {
+      if (pending.need === 'teammate' && targetable.has(id)) issue(pending.playerId, pending.make(id))
+      else if (pending.need === 'enemy' && targetable.has(id)) issue(pending.playerId, pending.make(id))
       return
     }
-    setSelection((cur) => (cur?.kind === 'play' && cur.id === cardId ? null : { kind: 'play', id: cardId }))
+    if (p.side !== YOU) return
+    setSelectedId((cur) => (cur === id ? null : id))
   }
 
-  const handleSelectBench = (uid: string) => {
-    setSelection((cur) => (cur?.kind === 'bench' && cur.uid === uid ? null : { kind: 'bench', uid }))
-  }
-
-  const handlePlayerSlot = (pos: Position) => {
-    if (selectedBench) {
-      game.sub(selectedBench.uid, pos)
-    } else if (selectedPlay && selectedPlay.target === 'ally' && player.lineup[pos]) {
-      game.playCard(selectedPlay.id, 'player', pos)
+  const onCourtTap = (pt: Vec) => {
+    if (pending?.need === 'point') {
+      issue(pending.playerId, pending.make(pt))
+      return
     }
-    setSelection(null)
+    setSelectedId(null)
   }
 
-  const handleAiSlot = (pos: Position) => {
-    if (selectedPlay?.target === 'enemy' && ai.lineup[pos]) {
-      game.playCard(selectedPlay.id, 'ai', pos)
-      setSelection(null)
+  const onDragRoute = (id: string, to: Vec) => {
+    const p = byId(id)
+    if (!p || p.side !== YOU) return
+    const order: Order = !onOffense
+      ? { kind: 'help', to }
+      : id === state.ballHandlerId
+        ? { kind: 'drive', to }
+        : { kind: 'move', to }
+    issue(id, order)
+  }
+
+  // --- Action menu for the selected player --------------------------------
+  const actions = useMemo(() => {
+    if (!selected || selected.side !== YOU) return []
+    const id = selected.id
+    const list: { label: string; run: () => void }[] = []
+    if (onOffense) {
+      if (id === state.ballHandlerId) {
+        list.push({ label: '🏀 Shoot', run: () => game.callShot(id) })
+        list.push({
+          label: 'Pass →',
+          run: () => setPending({ playerId: id, need: 'teammate', make: (t) => ({ kind: 'pass', toId: t }), hint: 'Pick a teammate to pass to.', risk: 'pass' }),
+        })
+        list.push({ label: 'Drive', run: () => issue(id, { kind: 'drive', to: { ...BASKET } }) })
+      } else {
+        list.push({ label: 'Cut', run: () => issue(id, { kind: 'cut', to: { ...BASKET } }) })
+        list.push({
+          label: 'Move →',
+          run: () => setPending({ playerId: id, need: 'point', make: (pt) => ({ kind: 'move', to: pt }), hint: 'Tap a spot to relocate to.' }),
+        })
+        list.push({
+          label: 'Screen →',
+          run: () => setPending({ playerId: id, need: 'teammate', make: (t) => ({ kind: 'screen', forId: t }), hint: 'Pick the teammate to screen for.' }),
+        })
+        list.push({ label: 'Spot up', run: () => issue(id, { kind: 'idle' }) })
+      }
+    } else {
+      list.push({
+        label: 'Guard →',
+        run: () => setPending({ playerId: id, need: 'enemy', make: (m) => ({ kind: 'guard', markId: m }), hint: 'Pick the man to guard (switch).' }),
+      })
+      if (state.ballHandlerId) {
+        list.push({ label: 'Double', run: () => issue(id, { kind: 'double', markId: state.ballHandlerId! }) })
+        list.push({ label: 'Steal', run: () => issue(id, { kind: 'steal', markId: state.ballHandlerId! }) })
+      }
+      list.push({
+        label: 'Help →',
+        run: () => setPending({ playerId: id, need: 'point', make: (pt) => ({ kind: 'help', to: pt }), hint: 'Tap a spot to rotate to.' }),
+      })
     }
-  }
+    return list
+  }, [selected, onOffense, state.ballHandlerId, game])
 
-  const selectionHint = selectedBench
-    ? `Pick a slot for ${selectedBench.card.name} — ${selectedBench.card.position} is his natural spot.`
-    : selectedPlay
-      ? selectedPlay.target === 'ally'
-        ? 'Pick one of your athletes.'
-        : selectedPlay.target === 'enemy'
-          ? 'Pick an opposing athlete.'
-          : ''
-      : ''
-  const coachTip = coachStage < COACH_DONE ? COACH_TIPS[coachStage] : null
-  const hint = !interactive
-    ? ''
-    : selectionHint || coachTip || 'Make subs, call plays, check the lane chips, then resolve.'
+  const hint = pending
+    ? pending.hint
+    : selected
+      ? `${selected.name} (${selected.role}) — pick an action.`
+      : onOffense
+        ? 'Your ball. Tap a player for orders, or drag to draw a route. Tap a shooter → Shoot.'
+        : 'Defense. Set your assignments, then run the beat.'
 
   return (
     <div className="cc">
@@ -194,12 +200,7 @@ export default function CourtClash() {
         </a>
         <h1 className="cc__title">Court Clash</h1>
         <div className="cc__header-actions">
-          <button
-            type="button"
-            className="cc-btn cc-btn--icon"
-            onClick={() => setHelpOpen(true)}
-            aria-label="How to play"
-          >
+          <button type="button" className="cc-btn cc-btn--icon" onClick={() => setHelpOpen(true)} aria-label="How to play">
             ?
           </button>
           <button type="button" className="cc-btn" onClick={game.newGame}>
@@ -208,103 +209,70 @@ export default function CourtClash() {
         </div>
       </header>
 
-      <Scoreboard
-        playerScore={player.score}
-        aiScore={ai.score}
-        quarter={state.quarter}
-        gameClock={state.gameClock}
+      <div className="cc__scoreboard">
+        <div className={`cc__score ${onOffense ? 'cc__score--live' : ''}`}>
+          <span className="cc__score-label">YOU</span>
+          <span className="cc__score-num">{state.score.player}</span>
+        </div>
+        <div className="cc__center">
+          <div className="cc__possession">{onOffense ? '◀ OFFENSE' : 'DEFENSE ▶'}</div>
+          <div className={`cc__shotclock ${state.shotClock <= 3 ? 'cc__shotclock--warn' : ''}`}>:{String(state.shotClock).padStart(2, '0')}</div>
+          <div className="cc__to">first to {WIN_TARGET}</div>
+        </div>
+        <div className={`cc__score ${!onOffense ? 'cc__score--live' : ''}`}>
+          <span className="cc__score-label">CPU</span>
+          <span className="cc__score-num">{state.score.ai}</span>
+        </div>
+      </div>
+
+      <p className={`cc__hint ${pending ? 'cc__hint--active' : ''}`}>{hint}</p>
+
+      <Court
+        players={state.players}
+        ballHandlerId={state.ballHandlerId}
+        yourSide={YOU}
+        selectedId={selectedId}
+        targetable={targetable}
+        targetRisk={targetRisk}
+        shooterRisk={shooterRisk}
+        animating={animating}
+        flash={flash}
+        onPlayerTap={onPlayerTap}
+        onCourtTap={onCourtTap}
+        onDragRoute={onDragRoute}
       />
 
-      <div className="cc__controls">
-        <ShotClock
-          seconds={game.shotClock}
-          timed={game.timed}
-          onToggleTimed={() => game.setTimed(!game.timed)}
-        />
-        <EnergyBar energy={player.energy} />
+      <div className="cc__bar">
+        {pending ? (
+          <button type="button" className="cc-btn" onClick={() => setPending(null)}>
+            ✕ Cancel
+          </button>
+        ) : selected && selected.side === YOU ? (
+          <div className="cc__actions">
+            {actions.map((a) => (
+              <button key={a.label} type="button" className="cc-btn cc-btn--action" onClick={a.run}>
+                {a.label}
+              </button>
+            ))}
+          </div>
+        ) : (
+          <span className="cc__bar-tip">Tap one of your players (●) to give orders.</span>
+        )}
         <button
           type="button"
-          className="cc-btn cc-btn--primary cc__resolve"
-          onClick={game.endPossession}
-          disabled={!interactive}
+          className="cc-btn cc-btn--primary cc__run"
+          onClick={game.runBeat}
+          disabled={animating || state.phase !== 'play'}
         >
-          Resolve Clash ▶
+          Run Beat ▶
         </button>
       </div>
 
-      <p className={`cc__hint ${resolving ? 'cc__hint--resolving' : ''} ${!selectionHint && coachTip ? 'cc__hint--coach' : ''}`}>
-        {resolving ? 'Clash!' : hint}
-        {interactive && !selectionHint && coachTip && (
-          <button
-            type="button"
-            className="cc__hint-dismiss"
-            onClick={() => advanceCoach(COACH_DONE)}
-            aria-label="Dismiss tips"
-          >
-            ✕
-          </button>
-        )}
-      </p>
-
-      <div className="cc__main">
-        <Board
-          playerLineup={player.lineup}
-          aiLineup={ai.lineup}
-          playerEff={playerEff}
-          aiEff={aiEff}
-          lanes={lanes}
-          targetablePlayerSlots={targetablePlayerSlots}
-          targetableAiSlots={targetableAiSlots}
-          onPlayerSlotClick={handlePlayerSlot}
-          onAiSlotClick={handleAiSlot}
-        />
-        <GameLog lines={state.log} />
-      </div>
-
-      <div className="cc__sideline">
-        <div className="cc__sideline-section">
-          <div className="cc__sideline-label">BENCH</div>
-          <Bench
-            bench={player.bench}
-            energy={player.energy}
-            selectedUid={selection?.kind === 'bench' ? selection.uid : null}
-            onSelect={handleSelectBench}
-          />
-        </div>
-        <div className="cc__sideline-section">
-          <div className="cc__sideline-label">PLAYBOOK</div>
-          <Hand
-            cards={player.hand}
-            energy={player.energy}
-            selectedId={selection?.kind === 'play' ? selection.id : null}
-            onSelect={handleSelectPlay}
-          />
-        </div>
-      </div>
+      <GameLog lines={state.log} />
 
       {helpOpen && <HelpModal onClose={closeHelp} />}
-
-      {state.phase === 'quarterBreak' && (
-        <div className="cc-modal">
-          <div className="cc-modal__card">
-            <h2 className="cc-modal__title">{state.log[0]}</h2>
-            <p className="cc-modal__score">
-              YOU {player.score} — {ai.score} CPU
-            </p>
-            <button type="button" className="cc-btn cc-btn--primary" onClick={game.advanceQuarter}>
-              Tip Off ▶
-            </button>
-          </div>
-        </div>
-      )}
-
       {state.phase === 'gameover' && state.winner && (
-        <GameOverModal
-          winner={state.winner}
-          playerScore={player.score}
-          aiScore={ai.score}
-          onNewGame={game.newGame}
-        />
+        <GameOverModal winner={state.winner} playerScore={state.score.player} aiScore={state.score.ai} onNewGame={game.newGame} />
       )}
     </div>
   )
