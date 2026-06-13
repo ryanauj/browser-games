@@ -8,16 +8,17 @@ by a hash route (e.g. `#/court-clash`).
 
 ## Games
 
-- **Court Clash** — a 5v5 basketball coaching sim played as a lane battler: Clash
-  Royale clashes, Hearthstone-style play cards, NBA rotations. Both teams always
-  have five on the floor (PG/SG/SF/PF/C); each possession the CPU coach moves
-  first, in the open, and exact lane projections show who scores where. Athletes
-  burn stamina every possession — gassed players collapse, the bench recovers —
-  and defenders who get blown out pick up fouls (4 and they're gone for the
-  game). Spend coach energy on substitutions and playbook calls, out-rotate the
-  CPU across four quarters, and survive sudden-death overtime on a tie. Includes
-  a how-to-play guide, staged coach tips, and an optional real-time 24s shot
-  clock — and it's mobile friendly.
+- **Court Clash** — *The Floor General*: real-time, beat-by-beat half-court
+  5v5. You direct all five of your players — orchestrate drives, screens, cuts
+  and passes on offense, and switch, double and help rotations on defense — one
+  ~1-second beat at a time. Outcomes resolve as probabilities dominated by how
+  open you get the floor (a wide-open role player beats a covered star), with
+  eight per-player attributes running under the hood and surfaced only as a
+  green/yellow/red risk glow. Steals, blocks and offensive rebounds are all in
+  play, a short shot clock forces the issue, and stamina limits how much you can
+  move your five. First to 15, win by 2. Tap a player for orders or drag to draw
+  a route — and it's mobile friendly. See `src/games/courtClash/SPEC.md` for the
+  full design.
 
 ## Adding a game
 
