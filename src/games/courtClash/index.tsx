@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { BASKET, WIN_TARGET, riskOf, type Risk } from './constants'
 import { passStealChance, shotMakeChance } from './engine'
+import { reachOf, stepToward } from './geometry'
 import { useCourtClash } from './useCourtClash'
 import type { Order, Side, Vec } from './types'
 import { AttrPanel } from './components/AttrPanel'
@@ -31,7 +32,7 @@ function writeStored(key: string, value: string): void {
 /** What a queued order is still waiting on. */
 type Pending =
   | null
-  | { playerId: string; need: 'point'; make: (pt: Vec) => Order; hint: string }
+  | { playerId: string; need: 'point'; make: (pt: Vec) => Order; hint: string; clampReach?: boolean }
   | { playerId: string; need: 'teammate' | 'enemy'; make: (id: string) => Order; hint: string; risk?: 'pass' }
 
 export default function CourtClash() {
@@ -105,6 +106,12 @@ export default function CourtClash() {
     return map
   }, [pending, byId, yourPlayers, state.players])
 
+  // Clamp a destination to one beat's reach from the player's current spot.
+  const reachClamp = (playerId: string, to: Vec): Vec => {
+    const p = byId(playerId)
+    return p ? stepToward(p.pos, to, reachOf(p)) : to
+  }
+
   // --- Interaction ---------------------------------------------------------
   const issue = (playerId: string, order: Order) => {
     game.setOrder(playerId, order)
@@ -126,7 +133,8 @@ export default function CourtClash() {
 
   const onCourtTap = (pt: Vec) => {
     if (pending?.need === 'point') {
-      issue(pending.playerId, pending.make(pt))
+      const dest = pending.clampReach ? reachClamp(pending.playerId, pt) : pt
+      issue(pending.playerId, pending.make(dest))
       return
     }
     setSelectedId(null)
@@ -135,11 +143,12 @@ export default function CourtClash() {
   const onDragRoute = (id: string, to: Vec) => {
     const p = byId(id)
     if (!p || p.side !== YOU) return
+    const dest = reachClamp(id, to) // one beat = one move
     const order: Order = !onOffense
-      ? { kind: 'help', to }
+      ? { kind: 'help', to: dest }
       : id === state.ballHandlerId
-        ? { kind: 'drive', to }
-        : { kind: 'move', to }
+        ? { kind: 'drive', to: dest }
+        : { kind: 'move', to: dest }
     issue(id, order)
   }
 
@@ -155,12 +164,12 @@ export default function CourtClash() {
           label: 'Pass →',
           run: () => setPending({ playerId: id, need: 'teammate', make: (t) => ({ kind: 'pass', toId: t }), hint: 'Pick a teammate to pass to.', risk: 'pass' }),
         })
-        list.push({ label: 'Drive', run: () => issue(id, { kind: 'drive', to: { ...BASKET } }) })
+        list.push({ label: 'Drive', run: () => issue(id, { kind: 'drive', to: reachClamp(id, BASKET) }) })
       } else {
-        list.push({ label: 'Cut', run: () => issue(id, { kind: 'cut', to: { ...BASKET } }) })
+        list.push({ label: 'Cut', run: () => issue(id, { kind: 'cut', to: reachClamp(id, BASKET) }) })
         list.push({
           label: 'Move →',
-          run: () => setPending({ playerId: id, need: 'point', make: (pt) => ({ kind: 'move', to: pt }), hint: 'Tap a spot to relocate to.' }),
+          run: () => setPending({ playerId: id, need: 'point', make: (pt) => ({ kind: 'move', to: pt }), hint: 'Tap a spot within reach.', clampReach: true }),
         })
         list.push({
           label: 'Screen →',
@@ -179,7 +188,7 @@ export default function CourtClash() {
       }
       list.push({
         label: 'Help →',
-        run: () => setPending({ playerId: id, need: 'point', make: (pt) => ({ kind: 'help', to: pt }), hint: 'Tap a spot to rotate to.' }),
+        run: () => setPending({ playerId: id, need: 'point', make: (pt) => ({ kind: 'help', to: pt }), hint: 'Tap a spot within reach.', clampReach: true }),
       })
     }
     return list

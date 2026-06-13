@@ -1,8 +1,27 @@
-import { BASKET, COURT_H, COURT_W, MAX_SHOT_RANGE, OPEN_DISTANCE, RIM_RADIUS, THREE_PT_RADIUS } from './constants'
+import {
+  BASE_STEP,
+  BASKET,
+  COURT_H,
+  COURT_W,
+  GASSED_FACTOR,
+  GASSED_THRESHOLD,
+  MAX_SHOT_RANGE,
+  OPEN_DISTANCE,
+  RIM_RADIUS,
+  SPEED_STEP_BONUS,
+  THREE_PT_RADIUS,
+} from './constants'
 import type { Player, Side, Vec } from './types'
 
 export function dist(a: Vec, b: Vec): number {
   return Math.hypot(a.x - b.x, a.y - b.y)
+}
+
+/** Floor units a player can cover in one beat (speed + a gassed penalty). The
+ *  single source of truth for movement, the reach ring, and drag clamping. */
+export function reachOf(p: Player): number {
+  const base = BASE_STEP + (p.attr.speed / 99) * SPEED_STEP_BONUS
+  return p.stamina < GASSED_THRESHOLD ? base * GASSED_FACTOR : base
 }
 
 export function distToRim(p: Vec): number {

@@ -1,5 +1,4 @@
 import {
-  BASE_STEP,
   BASKET,
   BLOCK_BASE_PERIMETER,
   BLOCK_BASE_RIM,
@@ -7,7 +6,6 @@ import {
   CONTEST_RADIUS,
   GAMBLE_STEAL_BASE,
   GAMBLE_STEAL_STAT_WEIGHT,
-  GASSED_FACTOR,
   GASSED_THRESHOLD,
   OPENNESS_SHOT_WEIGHT,
   OREB_BASE,
@@ -22,7 +20,6 @@ import {
   SHOT_CLOCK_BEATS,
   SHOT_CLOCK_RESET_OREB,
   SHOT_STAT_WEIGHT,
-  SPEED_STEP_BONUS,
   SPRINT_FLOOR,
   STAMINA_COST,
   STRIP_BASE,
@@ -40,6 +37,7 @@ import {
   openness,
   opponentOf,
   rangePenalty,
+  reachOf,
   shotPoints,
   shotType,
   stepToward,
@@ -122,10 +120,8 @@ const clampP = (p: number): number => Math.max(0.03, Math.min(0.97, p))
 const isGassed = (p: Player): boolean => p.stamina < GASSED_THRESHOLD
 const statN = (v: number): number => (v - 50) / 49 // ~[-1,1]
 
-function stepLen(p: Player): number {
-  const base = BASE_STEP + (p.attr.speed / 99) * SPEED_STEP_BONUS
-  return isGassed(p) ? base * GASSED_FACTOR : base
-}
+/** Movement orders that complete in a single beat (move there, then idle). */
+const ONE_BEAT_MOVES = new Set(['move', 'cut', 'drive', 'help'])
 
 function pushLog(log: string[], line: string): string[] {
   return [line, ...log].slice(0, 8)
@@ -202,10 +198,15 @@ function applyMovement(players: Player[], ballHandlerId: string | null): void {
     if ((p.order.kind === 'drive' || p.order.kind === 'cut') && p.stamina < SPRINT_FLOOR) {
       p.order = { kind: 'idle' }
     }
-    let step = stepLen(p)
+    let step = reachOf(p)
     if (p.stuck > 0) step *= STUCK_FACTOR // hung up on a screen (decayed at beat start)
     const target = targetFor(p, players, ballHandler)
-    if (target) p.pos = clampToCourt(stepToward(p.pos, target, step))
+    if (target) {
+      p.pos = clampToCourt(stepToward(p.pos, target, step))
+      // A direct move is one beat: once arrived, drop to idle so the coach
+      // re-orders (and the player recovers) rather than drifting on.
+      if (ONE_BEAT_MOVES.has(p.order.kind) && dist(p.pos, target) < 1.2) p.order = { kind: 'idle' }
+    }
     const cost = STAMINA_COST[p.order.kind]
     p.stamina = Math.max(0, Math.min(100, p.stamina - cost))
   }
