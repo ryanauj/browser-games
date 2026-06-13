@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { BASKET, WIN_TARGET, riskOf, type Risk } from './constants'
 import { passStealChance, shotMakeChance } from './engine'
-import { reachOf, stepToward } from './geometry'
+import { dist, reachOf, stepToward } from './geometry'
 import { useCourtClash } from './useCourtClash'
 import type { Order, Side, Vec } from './types'
 import { AttrPanel } from './components/AttrPanel'
 import { Court } from './components/Court'
+import { DebugPanel } from './components/DebugPanel'
 import { GameLog } from './components/GameLog'
 import { GameOverModal } from './components/GameOverModal'
 import { HelpModal } from './components/HelpModal'
@@ -13,6 +14,8 @@ import './courtClash.css'
 
 const HELP_SEEN_KEY = 'courtclash-help-seen'
 const YOU: Side = 'player'
+/** Floor-unit radius for treating overlapping sprites as a tappable stack. */
+const STACK_RADIUS = 9
 
 function readStored(key: string): string | null {
   try {
@@ -44,6 +47,7 @@ export default function CourtClash() {
   const [pending, setPending] = useState<Pending>(null)
   const [flash, setFlash] = useState<{ text: string; tone: Risk | 'neutral' } | null>(null)
 
+  const [debugOpen, setDebugOpen] = useState(false)
   const [helpOpen, setHelpOpen] = useState(() => readStored(HELP_SEEN_KEY) !== '1')
   const closeHelp = useCallback(() => {
     writeStored(HELP_SEEN_KEY, '1')
@@ -127,8 +131,16 @@ export default function CourtClash() {
       else if (pending.need === 'enemy' && targetable.has(id)) issue(pending.playerId, pending.make(id))
       return
     }
-    // Tap any player to inspect their attributes (yours or the CPU's).
-    setSelectedId((cur) => (cur === id ? null : id))
+    // Tap any player to inspect/order them. When sprites overlap, repeated taps
+    // on the same spot cycle through the stack so a buried player is reachable.
+    const stack = state.players
+      .filter((q) => dist(q.pos, p.pos) <= STACK_RADIUS)
+      .sort((a, b) => a.id.localeCompare(b.id))
+    setSelectedId((cur) => {
+      if (stack.length <= 1) return cur === p.id ? null : p.id
+      const idx = stack.findIndex((q) => q.id === cur)
+      return idx === -1 ? p.id : stack[(idx + 1) % stack.length].id
+    })
   }
 
   const onCourtTap = (pt: Vec) => {
@@ -213,6 +225,9 @@ export default function CourtClash() {
           <button type="button" className="cc-btn cc-btn--icon" onClick={() => setHelpOpen(true)} aria-label="How to play">
             ?
           </button>
+          <button type="button" className="cc-btn cc-btn--icon" onClick={() => setDebugOpen(true)} aria-label="Debug log">
+            🐞
+          </button>
           <button type="button" className="cc-btn" onClick={game.newGame}>
             New Game
           </button>
@@ -284,6 +299,7 @@ export default function CourtClash() {
 
       <GameLog lines={state.log} />
 
+      {debugOpen && <DebugPanel getLog={game.getDebug} onClose={() => setDebugOpen(false)} />}
       {helpOpen && <HelpModal onClose={closeHelp} />}
       {state.phase === 'gameover' && state.winner && (
         <GameOverModal winner={state.winner} playerScore={state.score.player} aiScore={state.score.ai} onNewGame={game.newGame} />

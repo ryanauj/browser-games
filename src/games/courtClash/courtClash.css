@@ -484,18 +484,19 @@
 }
 .cc-attrs__grid {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 5px;
 }
-@media (max-width: 380px) {
+@media (min-width: 560px) {
   .cc-attrs__grid {
-    grid-template-columns: repeat(2, 1fr);
+    grid-template-columns: repeat(4, minmax(0, 1fr));
   }
 }
 .cc-attr {
   display: flex;
   align-items: center;
   gap: 5px;
+  min-width: 0;
   padding: 4px 6px;
   border-radius: 7px;
   background: var(--cc-panel-2);
@@ -505,14 +506,19 @@
 }
 .cc-attr__icon {
   font-size: 0.9rem;
+  flex: 0 0 auto;
 }
 .cc-attr__label {
-  white-space: nowrap;
   flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
   color: var(--cc-dim);
 }
 .cc-attr__val {
   margin-left: auto;
+  flex: 0 0 auto;
   min-width: 24px;
   text-align: center;
   border-radius: 5px;
@@ -609,6 +615,78 @@
   font-weight: 800;
   font-variant-numeric: tabular-nums;
   margin: 0 0 18px;
+}
+
+/* Debug panel ----------------------------------------------------------- */
+.cc-debug {
+  text-align: left;
+  width: min(94vw, 560px);
+}
+.cc-debug__meta {
+  margin: 0 0 10px;
+  font-size: 0.8rem;
+  color: var(--cc-dim);
+  font-variant-numeric: tabular-nums;
+}
+.cc-debug__actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+}
+.cc-debug__status {
+  margin: 0 0 8px;
+  font-size: 0.8rem;
+  color: var(--cc-good);
+}
+.cc-debug__frames {
+  max-height: 38vh;
+  overflow-y: auto;
+  border: 1px solid var(--cc-line);
+  border-radius: 8px;
+  padding: 4px;
+}
+.cc-debug__frame {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 4px;
+  font-size: 0.74rem;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+.cc-debug__frame-id {
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  min-width: 64px;
+}
+.cc-debug__frame-tag {
+  color: var(--cc-dim);
+  min-width: 30px;
+}
+.cc-debug__frame-score {
+  font-variant-numeric: tabular-nums;
+  min-width: 34px;
+}
+.cc-debug__frame-ev {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--cc-dim);
+}
+.cc-debug__text {
+  width: 100%;
+  height: 110px;
+  margin-top: 8px;
+  background: #0a1120;
+  color: var(--cc-text);
+  border: 1px solid var(--cc-line);
+  border-radius: 8px;
+  padding: 8px;
+  font-family: ui-monospace, monospace;
+  font-size: 0.7rem;
+  resize: vertical;
 }
 
 /* Help / how-to-play ---------------------------------------------------- */

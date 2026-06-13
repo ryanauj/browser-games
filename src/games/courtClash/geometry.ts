@@ -3,12 +3,11 @@ import {
   BASKET,
   COURT_H,
   COURT_W,
-  GASSED_FACTOR,
-  GASSED_THRESHOLD,
   MAX_SHOT_RANGE,
   OPEN_DISTANCE,
   RIM_RADIUS,
   SPEED_STEP_BONUS,
+  STAMINA_REACH_MIN,
   THREE_PT_RADIUS,
 } from './constants'
 import type { Player, Side, Vec } from './types'
@@ -17,11 +16,13 @@ export function dist(a: Vec, b: Vec): number {
   return Math.hypot(a.x - b.x, a.y - b.y)
 }
 
-/** Floor units a player can cover in one beat (speed + a gassed penalty). The
- *  single source of truth for movement, the reach ring, and drag clamping. */
+/** Floor units a player can cover in one beat. Driven by speed, then scaled
+ *  continuously by stamina (so fatigue is always felt, not just past a cliff).
+ *  The single source of truth for movement, the reach ring, and drag clamping. */
 export function reachOf(p: Player): number {
   const base = BASE_STEP + (p.attr.speed / 99) * SPEED_STEP_BONUS
-  return p.stamina < GASSED_THRESHOLD ? base * GASSED_FACTOR : base
+  const staminaFactor = STAMINA_REACH_MIN + (1 - STAMINA_REACH_MIN) * (p.stamina / 100)
+  return base * staminaFactor
 }
 
 export function distToRim(p: Vec): number {

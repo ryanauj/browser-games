@@ -64,6 +64,9 @@ export const STAMINA_COST = {
 export const GASSED_THRESHOLD = 22
 /** A gassed player's step and contest stats scale by this. */
 export const GASSED_FACTOR = 0.62
+/** Reach scales continuously with stamina: a fully-drained player still covers
+ *  this fraction of their rested reach (100% stamina = full reach). */
+export const STAMINA_REACH_MIN = 0.5
 /** Below this stamina a player cannot sprint (drive/cut) until recovered. */
 export const SPRINT_FLOOR = 10
 
