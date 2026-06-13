@@ -1,7 +1,11 @@
 # Court Clash 2.0 — "The Floor General"
 
-> Rework spec. Status: **awaiting sign-off**. Authored 2026-06-13 from a
-> waterfall design interview. Supersedes the turn-based coaching-sim version.
+> Rework spec. Status: **APPROVED 2026-06-13**. Authored from a waterfall
+> design interview. Supersedes the turn-based coaching-sim version.
+>
+> Sign-off confirmations: players use **free floor (x,y) positions** moving
+> along drawn routes; **blocks can happen on any shot** (rim or outside), with
+> block odds weighted higher near the rim and lower on perimeter jumpers.
 
 ## 1. Why we're reworking
 
@@ -148,7 +152,9 @@ p = clamp( BASE[action]
     forced pickup.
   - **Shot** → make (2 or 3) / miss → **rebound contest** (off vs def rebound) →
     offensive rebound (reset) or defensive rebound (possession change).
-  - **Shot/drive at rim** → **block** chance from a rim protector (Interior D).
+  - **Any shot** → **block** chance from a contesting defender (Interior D),
+    weighted higher the closer the shot is to the rim and lower on perimeter
+    jumpers.
   - **Pass** → complete / deflected / **stolen (TO)**.
 - Determinism: a single **seeded PRNG** advanced by the engine (as today) so
   runs are reproducible and testable.
