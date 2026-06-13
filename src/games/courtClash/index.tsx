@@ -5,7 +5,7 @@ import { dist, reachOf, stepToward } from './geometry'
 import { useCourtClash } from './useCourtClash'
 import type { Order, Side, Vec } from './types'
 import { AttrPanel } from './components/AttrPanel'
-import { Court } from './components/Court'
+import { Court, type RadialItem } from './components/Court'
 import { DebugPanel } from './components/DebugPanel'
 import { GameLog } from './components/GameLog'
 import { GameOverModal } from './components/GameOverModal'
@@ -45,6 +45,7 @@ export default function CourtClash() {
 
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [pending, setPending] = useState<Pending>(null)
+  const [radial, setRadial] = useState<{ at: Vec; items: RadialItem[] } | null>(null)
   const [flash, setFlash] = useState<{ text: string; tone: Risk | 'neutral' } | null>(null)
 
   const [debugOpen, setDebugOpen] = useState(false)
@@ -63,6 +64,7 @@ export default function CourtClash() {
   useEffect(() => {
     setSelectedId(null)
     setPending(null)
+    setRadial(null)
   }, [state.possession, state.beat, state.phase])
 
   // Surface the latest beat event as a brief flash.
@@ -121,6 +123,7 @@ export default function CourtClash() {
     game.setOrder(playerId, order)
     setSelectedId(null)
     setPending(null)
+    setRadial(null)
   }
 
   const onPlayerTap = (id: string) => {
@@ -152,17 +155,73 @@ export default function CourtClash() {
     setSelectedId(null)
   }
 
-  const onDragRoute = (id: string, to: Vec) => {
+  // Drag-release opens a radial of the actions that fit the drop target: drop
+  // onto a player for pass/screen/guard/etc., or on a spot for move/screen/cut.
+  // One sensible action (Move/Drive/Help) is the primary; a lone action just
+  // fires (drag-to-teammate passes instantly, drag-to-floor on defense helps).
+  const onDragRelease = (id: string, at: Vec, targetId: string | null) => {
     const p = byId(id)
-    if (!p || p.side !== YOU) return
-    const dest = reachClamp(id, to) // one beat = one move
-    const order: Order = !onOffense
-      ? { kind: 'help', to: dest }
-      : id === state.ballHandlerId
-        ? { kind: 'drive', to: dest }
-        : { kind: 'move', to: dest }
-    issue(id, order)
+    if (!p || p.side !== YOU) {
+      setRadial(null)
+      return
+    }
+    const spot = reachClamp(id, at)
+    const target = byId(targetId)
+    const onTeammate = !!target && target.side === YOU && target.id !== id
+    const onEnemy = !!target && target.side !== YOU
+    const mk = (label: string, icon: string, order: Order): RadialItem => ({
+      label,
+      icon,
+      run: () => issue(id, order),
+    })
+    const items: RadialItem[] = []
+
+    if (onOffense) {
+      const isHandler = id === state.ballHandlerId
+      if (onTeammate && target) {
+        const to = reachClamp(id, target.pos)
+        if (isHandler) items.push(mk('Pass', '🤝', { kind: 'pass', toId: target.id }))
+        else {
+          items.push(mk('Screen', '🧱', { kind: 'screen', to }))
+          items.push(mk('Move', '👟', { kind: 'move', to }))
+        }
+      } else if (onEnemy && target) {
+        const to = reachClamp(id, target.pos)
+        if (isHandler) {
+          items.push(mk('Drive', '⚡', { kind: 'drive', to }))
+          items.push(mk('Move', '👟', { kind: 'move', to: spot }))
+        } else {
+          items.push(mk('Screen', '🧱', { kind: 'screen', to }))
+          items.push(mk('Move', '👟', { kind: 'move', to: spot }))
+        }
+      } else if (isHandler) {
+        items.push(mk('Drive', '⚡', { kind: 'drive', to: spot }))
+        items.push(mk('Move', '👟', { kind: 'move', to: spot }))
+      } else {
+        items.push(mk('Move', '👟', { kind: 'move', to: spot }))
+        items.push(mk('Screen', '🧱', { kind: 'screen', to: spot }))
+        items.push(mk('Cut', '✂️', { kind: 'cut', to: spot }))
+      }
+    } else if (onEnemy && target) {
+      items.push(mk('Guard', '🛡️', { kind: 'guard', markId: target.id }))
+      items.push(mk('Double', '👥', { kind: 'double', markId: target.id }))
+      items.push(mk('Steal', '🖐️', { kind: 'steal', markId: target.id }))
+    } else {
+      items.push(mk('Help', '🧭', { kind: 'help', to: spot }))
+    }
+
+    if (items.length === 0) {
+      setRadial(null)
+      return
+    }
+    if (items.length === 1) {
+      items[0].run()
+      return
+    }
+    setRadial({ at, items })
   }
+
+  const onRadialCancel = () => setRadial(null)
 
   // --- Action menu for the selected player --------------------------------
   const actions = useMemo(() => {
@@ -211,8 +270,8 @@ export default function CourtClash() {
     : selected
       ? `${selected.name} (${selected.role}) — pick an action.`
       : onOffense
-        ? 'Your ball. Tap a player for orders, or drag to draw a route. Tap a shooter → Shoot.'
-        : 'Defense. Set your assignments, then run the beat.'
+        ? 'Your ball. Drag a player onto a spot or teammate, then pick an action. Tap to inspect.'
+        : 'Defense. Drag onto an opponent to guard/double/steal, or onto a spot to help.'
 
   return (
     <div className="cc">
@@ -262,9 +321,11 @@ export default function CourtClash() {
         shooterRisk={shooterRisk}
         animating={animating}
         flash={flash}
+        radial={radial}
         onPlayerTap={onPlayerTap}
         onCourtTap={onCourtTap}
-        onDragRoute={onDragRoute}
+        onDragRelease={onDragRelease}
+        onRadialCancel={onRadialCancel}
       />
 
       {selected && <AttrPanel player={selected} />}

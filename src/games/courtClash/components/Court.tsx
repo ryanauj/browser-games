@@ -5,6 +5,13 @@ import { signatureAttr } from '../attributes'
 import { reachOf, stepToward } from '../geometry'
 import type { Player, Side, Vec } from '../types'
 
+/** One choice in the post-drag radial menu. The first item is the primary. */
+export interface RadialItem {
+  label: string
+  icon: string
+  run: () => void
+}
+
 export interface CourtProps {
   players: Player[]
   ballHandlerId: string | null
@@ -19,12 +26,17 @@ export interface CourtProps {
   /** True when a beat is animating (drives the glide timing class). */
   animating: boolean
   flash: { text: string; tone: Risk | 'neutral' } | null
+  /** Open radial menu (drop point + contextual actions), if any. */
+  radial: { at: Vec; items: RadialItem[] } | null
   onPlayerTap: (id: string) => void
   onCourtTap: (pt: Vec) => void
-  onDragRoute: (id: string, to: Vec) => void
+  /** A drag finished on `at`; `targetId` is the player dropped onto, if any. */
+  onDragRelease: (id: string, at: Vec, targetId: string | null) => void
+  onRadialCancel: () => void
 }
 
 const DRAG_THRESHOLD = 3 // logic units
+const DROP_HIT = 7 // logic-unit radius for "dropped onto this player"
 
 export function Court(props: CourtProps) {
   const {
@@ -37,9 +49,11 @@ export function Court(props: CourtProps) {
     shooterRisk,
     animating,
     flash,
+    radial,
     onPlayerTap,
     onCourtTap,
-    onDragRoute,
+    onDragRelease,
+    onRadialCancel,
   } = props
   const ref = useRef<HTMLDivElement>(null)
   const [drag, setDrag] = useState<{ id: string; from: Vec; to: Vec; moved: boolean } | null>(null)
@@ -76,10 +90,23 @@ export function Court(props: CourtProps) {
     return p ? stepToward(p.pos, to, reachOf(p)) : to
   }
 
+  // Nearest player (any side) under the drop point, if the drag ended on one.
+  const dropTarget = (draggedId: string, at: Vec): string | null => {
+    let best: { id: string; d: number } | null = null
+    for (const p of players) {
+      if (p.id === draggedId) continue
+      const d = Math.hypot(p.pos.x - at.x, p.pos.y - at.y)
+      if (d <= DROP_HIT && (!best || d < best.d)) best = { id: p.id, d }
+    }
+    return best?.id ?? null
+  }
+
   const onUp = (e: React.PointerEvent) => {
     if (drag) {
-      if (drag.moved) onDragRoute(drag.id, clampDrag(drag.id, toLogic(e)))
-      else onPlayerTap(drag.id)
+      if (drag.moved) {
+        const at = toLogic(e)
+        onDragRelease(drag.id, at, dropTarget(drag.id, at))
+      } else onPlayerTap(drag.id)
       setDrag(null)
       return
     }
@@ -208,6 +235,39 @@ export function Court(props: CourtProps) {
       })}
 
       {flash && <div className={`cc-flash cc-flash--${flash.tone}`}>{flash.text}</div>}
+
+      {radial && (
+        <div className="cc-radial-backdrop" onPointerDown={() => onRadialCancel()}>
+          <div className="cc-radial" style={{ left: pct(radial.at.x, COURT_W), top: pct(radial.at.y, COURT_H) }}>
+            {radial.items.map((it, i) => {
+              // Item 0 sits at the drop point; the rest fan out in an upward arc.
+              const sec = radial.items.length - 1
+              const j = i - 1
+              const deg = -90 + (j - (sec - 1) / 2) * 48
+              const r = i === 0 ? 0 : 58
+              const dx = i === 0 ? 0 : Math.cos(deg * (Math.PI / 180)) * r
+              const dy = i === 0 ? 0 : Math.sin(deg * (Math.PI / 180)) * r
+              return (
+                <button
+                  type="button"
+                  key={it.label}
+                  className={`cc-radial__btn ${i === 0 ? 'cc-radial__btn--primary' : ''}`}
+                  style={{ transform: `translate(calc(-50% + ${dx}px), calc(-50% + ${dy}px))` }}
+                  onPointerDown={(e) => {
+                    e.stopPropagation()
+                    it.run()
+                  }}
+                >
+                  <span className="cc-radial__icon" aria-hidden>
+                    {it.icon}
+                  </span>
+                  <span className="cc-radial__label">{it.label}</span>
+                </button>
+              )
+            })}
+          </div>
+        </div>
+      )}
     </div>
   )
 }
