@@ -68,6 +68,22 @@ export const GASSED_FACTOR = 0.62
 export const SPRINT_FLOOR = 10
 
 // ---------------------------------------------------------------------------
+// Screens. A planted screen bumps any defender who runs through it, sticking
+// them for a beat or two and springing their man open.
+// ---------------------------------------------------------------------------
+
+/** A defender within this distance of a screener gets caught on the pick. */
+export const SCREEN_RADIUS = 10
+/** Base beats a defender is stuck; strength vs the defender's quickness scales it. */
+export const SCREEN_BASE = 1
+export const SCREEN_MAX = 2
+export const SCREEN_STAT_WEIGHT = 1.6
+/** A stuck defender moves at this fraction of their step (slowed/screened). */
+export const STUCK_FACTOR = 0.18
+/** A screener is freed (back to idle) after this many beats if it hasn't hit anyone. */
+export const SCREEN_HOLD_MAX = 2
+
+// ---------------------------------------------------------------------------
 // Contest model. Openness dominates; stat deltas swing it; randomness seasons.
 // All probabilities are clamped to [0.03, 0.97].
 // ---------------------------------------------------------------------------

@@ -14,6 +14,10 @@ import {
   PASS_LANE_RADIUS,
   PASS_STEAL_BASE,
   PASS_STEAL_STAT_WEIGHT,
+  SCREEN_BASE,
+  SCREEN_HOLD_MAX,
+  SCREEN_MAX,
+  SCREEN_RADIUS,
   SHOT_BASE,
   SHOT_CLOCK_BEATS,
   SHOT_CLOCK_RESET_OREB,
@@ -23,6 +27,7 @@ import {
   STAMINA_COST,
   STRIP_BASE,
   STRIP_STAT_WEIGHT,
+  STUCK_FACTOR,
   THREE_PT_RADIUS,
   WIN_BY,
   WIN_TARGET,
@@ -77,7 +82,7 @@ function setupPossession(
   clock: number,
   log: string[],
 ): GameState {
-  const players = state.players.map((p) => ({ ...p, pos: { ...p.pos } }))
+  const players = state.players.map((p) => ({ ...p, pos: { ...p.pos }, stuck: 0, screenHeld: 0 }))
   const off = players.filter((p) => p.side === offense)
   const def = players.filter((p) => p.side !== offense)
 
@@ -143,15 +148,8 @@ function targetFor(p: Player, players: Player[], ballHandler: Player | undefined
     case 'cut':
     case 'drive':
     case 'help':
+    case 'screen':
       return p.order.to
-    case 'screen': {
-      const mate = byId(players, p.order.forId)
-      if (!mate) return null
-      const defender = players.find(
-        (d) => d.side !== p.side && d.order.kind === 'guard' && d.order.markId === mate.id,
-      )
-      return defender ? stepToward(defender.pos, mate.pos, 4) : { ...mate.pos }
-    }
     case 'guard': {
       const mark = byId(players, p.order.markId)
       return mark ? stepToward(mark.pos, BASKET, 9) : null
@@ -165,6 +163,38 @@ function targetFor(p: Player, players: Player[], ballHandler: Player | undefined
   }
 }
 
+/** Resolve planted screens: a defender who runs through a screener gets stuck
+ *  for a beat or two (scaled by the screener's strength vs the defender's
+ *  quickness), springing their man. The screener is freed once it connects or
+ *  after SCREEN_HOLD_MAX beats. Runs before movement so the slow takes hold. */
+function resolveScreens(players: Player[]): void {
+  for (const s of players) {
+    if (s.order.kind !== 'screen') continue
+    // Don't set the pick until the screener has actually planted at the spot —
+    // otherwise it would instantly "screen" whoever happens to be adjacent
+    // (often its own defender) and free itself before ever travelling.
+    const planted = dist(s.pos, s.order.to) <= SCREEN_RADIUS
+    if (!planted) continue
+    s.screenHeld += 1
+    let connected = false
+    for (const d of players) {
+      if (d.side === s.side) continue
+      if (dist(d.pos, s.pos) > SCREEN_RADIUS) continue
+      // A clean connect always sticks for SCREEN_BASE beats; a strong screener
+      // against a less-quick defender holds them an extra beat (up to SCREEN_MAX).
+      const quickness = (d.attr.speed + d.attr.perimeterD) / 2
+      const advantage = statN(s.attr.strength) - statN(quickness)
+      const dur = advantage > 0.15 ? SCREEN_MAX : SCREEN_BASE
+      d.stuck = Math.max(d.stuck, dur)
+      connected = true
+    }
+    if (connected || s.screenHeld >= SCREEN_HOLD_MAX) {
+      s.order = { kind: 'idle' }
+      s.screenHeld = 0
+    }
+  }
+}
+
 function applyMovement(players: Player[], ballHandlerId: string | null): void {
   const ballHandler = byId(players, ballHandlerId)
   for (const p of players) {
@@ -172,8 +202,10 @@ function applyMovement(players: Player[], ballHandlerId: string | null): void {
     if ((p.order.kind === 'drive' || p.order.kind === 'cut') && p.stamina < SPRINT_FLOOR) {
       p.order = { kind: 'idle' }
     }
+    let step = stepLen(p)
+    if (p.stuck > 0) step *= STUCK_FACTOR // hung up on a screen (decayed at beat start)
     const target = targetFor(p, players, ballHandler)
-    if (target) p.pos = clampToCourt(stepToward(p.pos, target, stepLen(p)))
+    if (target) p.pos = clampToCourt(stepToward(p.pos, target, step))
     const cost = STAMINA_COST[p.order.kind]
     p.stamina = Math.max(0, Math.min(100, p.stamina - cost))
   }
@@ -400,6 +432,10 @@ function runBeat(state: GameState): GameState {
 
 function decClockAndMove(state: GameState): GameState {
   const players = state.players.map((p) => ({ ...p, pos: { ...p.pos } }))
+  // Decay any lingering screen-stick from a prior beat, then set fresh picks so
+  // a connection persists into the rendered state (slow + indicator) this beat.
+  for (const p of players) if (p.stuck > 0) p.stuck -= 1
+  resolveScreens(players)
   applyMovement(players, state.ballHandlerId)
   const shotClock = state.shotClock - 1
   const beat = state.beat + 1
