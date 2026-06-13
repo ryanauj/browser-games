@@ -266,17 +266,37 @@
   pointer-events: none;
   text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
 }
-.cc-player__stamina {
+.cc-player__sta {
   position: absolute;
-  bottom: -6px;
-  left: 10%;
-  height: 3px;
-  border-radius: 2px;
-  background: var(--cc-good);
+  top: -10px;
+  left: 6%;
+  width: 88%;
+  height: 5px;
+  border-radius: 3px;
+  background: rgba(0, 0, 0, 0.6);
+  overflow: hidden;
   pointer-events: none;
 }
-.cc-player--gassed .cc-player__stamina {
+.cc-player__sta-fill {
+  display: block;
+  height: 100%;
+  border-radius: 3px;
+  transition: width 0.4s ease;
+}
+.cc-player__sta-fill--hi {
+  background: var(--cc-good);
+}
+.cc-player__sta-fill--mid {
+  background: var(--cc-fair);
+}
+.cc-player__sta-fill--lo {
   background: var(--cc-bad);
+}
+.cc-reach {
+  fill: rgba(54, 163, 255, 0.07);
+  stroke: rgba(54, 163, 255, 0.65);
+  stroke-width: 0.7;
+  stroke-dasharray: 2 2;
 }
 .cc-player__dot {
   position: absolute;
@@ -476,35 +496,50 @@
   display: flex;
   align-items: center;
   gap: 5px;
-  padding: 5px 6px;
+  padding: 4px 6px;
   border-radius: 7px;
+  background: var(--cc-panel-2);
   font-size: 0.72rem;
   font-weight: 700;
-  color: #0a0f18;
+  color: var(--cc-text);
 }
 .cc-attr__icon {
   font-size: 0.9rem;
 }
 .cc-attr__label {
   white-space: nowrap;
+  flex: 1;
+  color: var(--cc-dim);
 }
-/* 5-step cold → hot heat scale (weak → strong). */
-.cc-heat-1 {
-  background: #4a7fb5;
-  color: #eaf2fb;
+.cc-attr__val {
+  margin-left: auto;
+  min-width: 24px;
+  text-align: center;
+  border-radius: 5px;
+  padding: 1px 4px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
 }
-.cc-heat-2 {
-  background: #74b6c2;
-}
-.cc-heat-3 {
-  background: #d8d59a;
-}
-.cc-heat-4 {
-  background: #ef9d3c;
-}
-.cc-heat-5 {
+/* Value chip: green (strong) → red (weak), matching the risk-glow language. */
+.cc-grade-1 {
   background: #ff5630;
-  color: #fff5f0;
+  color: #fff;
+}
+.cc-grade-2 {
+  background: #ff9a52;
+  color: #1a1206;
+}
+.cc-grade-3 {
+  background: #e8c34a;
+  color: #1a1206;
+}
+.cc-grade-4 {
+  background: #9bd35a;
+  color: #0a1a0a;
+}
+.cc-grade-5 {
+  background: #3ddc84;
+  color: #06311c;
 }
 
 /* Play-by-play --------------------------------------------------------- */

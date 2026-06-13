@@ -21,9 +21,11 @@ export function HelpModal({ onClose }: Props) {
             <em>drag</em> from a player to draw a route. Set as many orders as you like,
             then press <em>Run Beat ▶</em> to advance time ~1 second and watch it play out.
             Orders persist until you change them, so you only touch who you want. Tap any
-            player — yours or the CPU's — to scout their strengths: each badge shows a
-            standout skill, and the tiles read <span className="cc-help__bad">cold</span> (weak)
-            to <span className="cc-help__good">hot</span> (strong).
+            player — yours or the CPU's — to scout their ratings: each badge shows a
+            standout skill, and the panel shows all eight 0–99 stats,{' '}
+            <span className="cc-help__good">green</span> (strong) to{' '}
+            <span className="cc-help__bad">red</span> (weak). The blue ring on a selected
+            player is how far they can move this beat — moves clamp to it.
           </li>
           <li>
             <strong>Get someone open.</strong> Openness is everything — a wide-open role

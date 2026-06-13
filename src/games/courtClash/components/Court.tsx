@@ -2,6 +2,7 @@ import { useRef, useState } from 'react'
 import { BASKET, COURT_H, COURT_W, RIM_RADIUS, THREE_PT_RADIUS, type Risk } from '../constants'
 import { GASSED_THRESHOLD } from '../constants'
 import { signatureAttr } from '../attributes'
+import { reachOf, stepToward } from '../geometry'
 import type { Player, Side, Vec } from '../types'
 
 export interface CourtProps {
@@ -69,9 +70,15 @@ export function Court(props: CourtProps) {
     setDrag({ ...drag, to, moved: drag.moved || moved })
   }
 
+  // Clamp a drag target to one beat's reach for the dragged player.
+  const clampDrag = (id: string, to: Vec): Vec => {
+    const p = players.find((pl) => pl.id === id)
+    return p ? stepToward(p.pos, to, reachOf(p)) : to
+  }
+
   const onUp = (e: React.PointerEvent) => {
     if (drag) {
-      if (drag.moved) onDragRoute(drag.id, toLogic(e))
+      if (drag.moved) onDragRoute(drag.id, clampDrag(drag.id, toLogic(e)))
       else onPlayerTap(drag.id)
       setDrag(null)
       return
@@ -148,9 +155,17 @@ export function Court(props: CourtProps) {
             strokeDasharray={r.dashed ? '3 3' : undefined}
           />
         ))}
-        {drag && drag.moved && (
-          <line x1={drag.from.x} y1={drag.from.y} x2={drag.to.x} y2={drag.to.y} className="cc-route cc-route--ghost" />
-        )}
+        {drag &&
+          drag.moved &&
+          (() => {
+            const c = clampDrag(drag.id, drag.to)
+            return <line x1={drag.from.x} y1={drag.from.y} x2={c.x} y2={c.y} className="cc-route cc-route--ghost" />
+          })()}
+        {(() => {
+          const sel = players.find((p) => p.id === selectedId && p.side === yourSide)
+          if (!sel) return null
+          return <circle cx={sel.pos.x} cy={sel.pos.y} r={reachOf(sel)} className="cc-reach" />
+        })()}
       </svg>
 
       {/* Players */}
@@ -178,7 +193,14 @@ export function Court(props: CourtProps) {
             <span className="cc-player__badge" title={sig.label} aria-hidden>
               {sig.icon}
             </span>
-            <span className="cc-player__stamina" style={{ width: `${p.stamina}%` }} />
+            <span className="cc-player__sta" aria-hidden>
+              <span
+                className={`cc-player__sta-fill cc-player__sta-fill--${
+                  p.stamina >= 55 ? 'hi' : p.stamina >= 28 ? 'mid' : 'lo'
+                }`}
+                style={{ width: `${p.stamina}%` }}
+              />
+            </span>
             {hasBall && <span className="cc-player__dot" aria-hidden />}
             {p.stuck > 0 && <span className="cc-player__stuck" aria-hidden />}
           </button>
