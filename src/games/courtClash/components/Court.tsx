@@ -1,6 +1,7 @@
 import { useRef, useState } from 'react'
 import { BASKET, COURT_H, COURT_W, RIM_RADIUS, THREE_PT_RADIUS, type Risk } from '../constants'
 import { GASSED_THRESHOLD } from '../constants'
+import { signatureAttr } from '../attributes'
 import type { Player, Side, Vec } from '../types'
 
 export interface CourtProps {
@@ -93,12 +94,13 @@ export function Court(props: CourtProps) {
     .map((p) => {
       const o = p.order
       let to: Vec | null = null
-      if (o.kind === 'move' || o.kind === 'cut' || o.kind === 'drive' || o.kind === 'help') to = o.to
+      if (o.kind === 'move' || o.kind === 'cut' || o.kind === 'drive' || o.kind === 'help' || o.kind === 'screen')
+        to = o.to
       else if (o.kind === 'pass') to = players.find((t) => t.id === o.toId)?.pos ?? null
       else if (o.kind === 'guard' || o.kind === 'steal' || o.kind === 'double') {
         const mk = o.kind === 'double' ? ballHandlerId : (o as { markId: string }).markId
         to = players.find((t) => t.id === mk)?.pos ?? null
-      } else if (o.kind === 'screen') to = players.find((t) => t.id === o.forId)?.pos ?? null
+      }
       if (!to) return null
       const dashed = o.kind === 'pass' || o.kind === 'guard' || o.kind === 'double' || o.kind === 'steal'
       return { id: p.id, from: p.pos, to, kind: o.kind, dashed }
@@ -161,19 +163,24 @@ export function Court(props: CourtProps) {
         const ring = hasBall && isYours && shooterRisk ? ` cc-player--risk-${shooterRisk}` : ''
         const tRisk = targetRisk[p.id]
         const targetCls = isTarget ? ` cc-player--target${tRisk ? ` cc-player--risk-${tRisk}` : ''}` : ''
+        const sig = signatureAttr(p.attr)
         return (
           <button
             type="button"
             key={p.id}
             className={`cc-player cc-player--${p.side}${isSel ? ' cc-player--sel' : ''}${
               hasBall ? ' cc-player--ball' : ''
-            }${gassed ? ' cc-player--gassed' : ''}${ring}${targetCls}`}
+            }${gassed ? ' cc-player--gassed' : ''}${p.stuck > 0 ? ' cc-player--stuck' : ''}${ring}${targetCls}`}
             style={{ left: pct(p.pos.x, COURT_W), top: pct(p.pos.y, COURT_H) }}
             onPointerDown={(e) => startDrag(e, p)}
           >
             <span className="cc-player__num">{p.number}</span>
+            <span className="cc-player__badge" title={sig.label} aria-hidden>
+              {sig.icon}
+            </span>
             <span className="cc-player__stamina" style={{ width: `${p.stamina}%` }} />
             {hasBall && <span className="cc-player__dot" aria-hidden />}
+            {p.stuck > 0 && <span className="cc-player__stuck" aria-hidden />}
           </button>
         )
       })}

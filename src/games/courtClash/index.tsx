@@ -3,6 +3,7 @@ import { BASKET, WIN_TARGET, riskOf, type Risk } from './constants'
 import { passStealChance, shotMakeChance } from './engine'
 import { useCourtClash } from './useCourtClash'
 import type { Order, Side, Vec } from './types'
+import { AttrPanel } from './components/AttrPanel'
 import { Court } from './components/Court'
 import { GameLog } from './components/GameLog'
 import { GameOverModal } from './components/GameOverModal'
@@ -119,7 +120,7 @@ export default function CourtClash() {
       else if (pending.need === 'enemy' && targetable.has(id)) issue(pending.playerId, pending.make(id))
       return
     }
-    if (p.side !== YOU) return
+    // Tap any player to inspect their attributes (yours or the CPU's).
     setSelectedId((cur) => (cur === id ? null : id))
   }
 
@@ -163,7 +164,7 @@ export default function CourtClash() {
         })
         list.push({
           label: 'Screen →',
-          run: () => setPending({ playerId: id, need: 'teammate', make: (t) => ({ kind: 'screen', forId: t }), hint: 'Pick the teammate to screen for.' }),
+          run: () => setPending({ playerId: id, need: 'point', make: (pt) => ({ kind: 'screen', to: pt }), hint: 'Tap where to plant the screen.' }),
         })
         list.push({ label: 'Spot up', run: () => issue(id, { kind: 'idle' }) })
       }
@@ -242,6 +243,8 @@ export default function CourtClash() {
         onDragRoute={onDragRoute}
       />
 
+      {selected && <AttrPanel player={selected} />}
+
       <div className="cc__bar">
         {pending ? (
           <button type="button" className="cc-btn" onClick={() => setPending(null)}>
@@ -255,8 +258,10 @@ export default function CourtClash() {
               </button>
             ))}
           </div>
+        ) : selected ? (
+          <span className="cc__bar-tip">Scouting {selected.name} — tap your own players to give orders.</span>
         ) : (
-          <span className="cc__bar-tip">Tap one of your players (●) to give orders.</span>
+          <span className="cc__bar-tip">Tap a player to give orders or scout their attributes.</span>
         )}
         <button
           type="button"

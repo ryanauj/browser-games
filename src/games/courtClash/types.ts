@@ -35,7 +35,7 @@ export type Order =
   | { kind: 'move'; to: Vec } // relocate / spot up (jog)
   | { kind: 'cut'; to: Vec } // hard cut toward a spot (costs stamina)
   | { kind: 'drive'; to: Vec } // ball handler attacks toward a point
-  | { kind: 'screen'; forId: string } // set a screen for a teammate's defender
+  | { kind: 'screen'; to: Vec } // plant a screen at a spot; bumps defenders who run through
   | { kind: 'pass'; toId: string } // one-shot: ball to a teammate this beat
   // defense
   | { kind: 'guard'; markId: string } // man-to-man (default)
@@ -55,6 +55,10 @@ export interface Player {
   pos: Vec
   stamina: number // 0..100
   order: Order
+  /** Beats remaining slowed by a screen (a defender stuck on a pick). */
+  stuck: number
+  /** Beats the player has been setting the current screen (frees after ~2). */
+  screenHeld: number
 }
 
 /** Transient outcome of the most recent beat/shot, for the UI to animate. */

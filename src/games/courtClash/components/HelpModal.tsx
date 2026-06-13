@@ -20,12 +20,17 @@ export function HelpModal({ onClose }: Props) {
             your players, beat by beat. <em>Tap</em> a player for the action menu, or{' '}
             <em>drag</em> from a player to draw a route. Set as many orders as you like,
             then press <em>Run Beat ▶</em> to advance time ~1 second and watch it play out.
-            Orders persist until you change them, so you only touch who you want.
+            Orders persist until you change them, so you only touch who you want. Tap any
+            player — yours or the CPU's — to scout their strengths: each badge shows a
+            standout skill, and the tiles read <span className="cc-help__bad">cold</span> (weak)
+            to <span className="cc-help__good">hot</span> (strong).
           </li>
           <li>
             <strong>Get someone open.</strong> Openness is everything — a wide-open role
-            player beats a covered star. Use screens, cuts and passes to spring a man, then
-            tap your ball handler and hit <em>Shoot</em>. The ring around the ball tells you
+            player beats a covered star. Plant a <em>screen</em> at a spot and any defender
+            who runs through it gets hung up for a beat — springing their man. Use screens,
+            cuts and passes to get someone open, then tap your ball handler and hit{' '}
+            <em>Shoot</em>. The ring around the ball tells you
             the look: <span className="cc-help__good">green</span> good,{' '}
             <span className="cc-help__bad">red</span> bad. Inside the arc is 2, beyond it 3.
           </li>
