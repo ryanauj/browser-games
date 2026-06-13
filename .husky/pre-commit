@@ -1,0 +1,2 @@
+# Mirror CI locally: typecheck + build must pass before committing.
+pnpm typecheck && pnpm build
