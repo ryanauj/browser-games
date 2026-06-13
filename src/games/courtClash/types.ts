@@ -59,6 +59,8 @@ export interface Player {
   stuck: number
   /** Beats the player has been setting the current screen (frees after ~2). */
   screenHeld: number
+  /** Beats remaining of a post-drive finishing boost on the next shot. */
+  primed: number
 }
 
 /** Transient outcome of the most recent beat/shot, for the UI to animate. */

@@ -4,6 +4,7 @@ import {
   BLOCK_BASE_RIM,
   BLOCK_STAT_WEIGHT,
   CONTEST_RADIUS,
+  DRIVE_FINISH_BONUS,
   GAMBLE_STEAL_BASE,
   GAMBLE_STEAL_STAT_WEIGHT,
   GASSED_THRESHOLD,
@@ -80,7 +81,7 @@ function setupPossession(
   clock: number,
   log: string[],
 ): GameState {
-  const players = state.players.map((p) => ({ ...p, pos: { ...p.pos }, stuck: 0, screenHeld: 0 }))
+  const players = state.players.map((p) => ({ ...p, pos: { ...p.pos }, stuck: 0, screenHeld: 0, primed: 0 }))
   const off = players.filter((p) => p.side === offense)
   const def = players.filter((p) => p.side !== offense)
 
@@ -204,8 +205,11 @@ function applyMovement(players: Player[], ballHandlerId: string | null): void {
     if ((p.order.kind === 'drive' || p.order.kind === 'cut') && p.stamina < SPRINT_FLOOR) {
       p.order = { kind: 'idle' }
     }
-    let step = reachOf(p)
+    const burst = p.order.kind === 'drive' || p.order.kind === 'cut'
+    let step = reachOf(p, burst) // drives/cuts explode past a jog's reach
     if (p.stuck > 0) step *= STUCK_FACTOR // hung up on a screen (decayed at beat start)
+    // A drive primes a finishing boost on this handler's next shot.
+    if (p.order.kind === 'drive') p.primed = 1
     const target = targetFor(p, players, ballHandler)
     if (target) {
       p.pos = clampToCourt(stepToward(p.pos, target, step))
@@ -277,7 +281,8 @@ export function shotMakeChance(players: Player[], shooter: Player): number {
     OPENNESS_SHOT_WEIGHT * (open - 0.4) +
     statN(skill) * SHOT_STAT_WEIGHT -
     rangePenalty(shooter.pos) * 0.45 -
-    (isGassed(shooter) ? 0.08 : 0)
+    (isGassed(shooter) ? 0.08 : 0) +
+    (shooter.primed > 0 ? DRIVE_FINISH_BONUS : 0) // downhill off a drive
   return clampP(p)
 }
 
@@ -441,7 +446,10 @@ function decClockAndMove(state: GameState): GameState {
   const players = state.players.map((p) => ({ ...p, pos: { ...p.pos } }))
   // Decay any lingering screen-stick from a prior beat, then set fresh picks so
   // a connection persists into the rendered state (slow + indicator) this beat.
-  for (const p of players) if (p.stuck > 0) p.stuck -= 1
+  for (const p of players) {
+    if (p.stuck > 0) p.stuck -= 1
+    if (p.primed > 0) p.primed -= 1 // a finishing boost expires if no shot followed
+  }
   resolveScreens(players)
   applyMovement(players, state.ballHandlerId)
   const shotClock = state.shotClock - 1
