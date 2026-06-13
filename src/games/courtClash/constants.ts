@@ -1,74 +1,123 @@
-import type { Position } from './types'
+import type { Vec } from './types'
 
-/** The five lineup slots, in display order (backcourt → frontcourt). */
-export const POSITIONS: Position[] = ['PG', 'SG', 'SF', 'PF', 'C']
+// ---------------------------------------------------------------------------
+// Floor geometry (logical units: a 100×100 square; rendered to match aspect).
+// Y=0 is the baseline (rim end), Y=100 is half-court. The rim sits just inside
+// the baseline at the top of the screen; offense attacks upward toward it.
+// ---------------------------------------------------------------------------
 
-export const POSITION_LABELS: Record<Position, string> = {
-  PG: 'Point Guard',
-  SG: 'Shooting Guard',
-  SF: 'Small Forward',
-  PF: 'Power Forward',
-  C: 'Center',
+export const COURT_W = 100
+export const COURT_H = 100
+
+/** The basket / rim location. */
+export const BASKET: Vec = { x: 50, y: 9 }
+
+/** Beyond this distance from the rim a make is worth 3; inside it's worth 2. */
+export const THREE_PT_RADIUS = 42
+
+/** Inside this radius a shot is a "layup/finish" (uses Finishing, not Shooting). */
+export const RIM_RADIUS = 14
+
+/** Max sane shot distance — heaves past this are wildly low percentage. */
+export const MAX_SHOT_RANGE = 78
+
+// ---------------------------------------------------------------------------
+// Beats, clock, scoring.
+// ---------------------------------------------------------------------------
+
+/** Real time one beat of animation occupies (ms). */
+export const BEAT_MS = 1100
+
+/** Possession length, counted in beats. Expiry = shot-clock turnover. */
+export const SHOT_CLOCK_BEATS = 13
+/** Shot clock after an offensive rebound. */
+export const SHOT_CLOCK_RESET_OREB = 7
+
+/** First to this many points, win by 2. */
+export const WIN_TARGET = 15
+export const WIN_BY = 2
+
+// ---------------------------------------------------------------------------
+// Movement & stamina.
+// ---------------------------------------------------------------------------
+
+/** Base floor units a player covers per beat at full stamina, before speed. */
+export const BASE_STEP = 16
+/** Speed attribute (0..99) adds up to this many extra units per beat. */
+export const SPEED_STEP_BONUS = 12
+
+/** Stamina drained per beat by exertion level (distance moved scales it). */
+export const STAMINA_COST = {
+  idle: -6, // negative = recover
+  pass: 0, // one-shot, resolved before movement
+  move: 5,
+  cut: 11,
+  drive: 12,
+  screen: 6,
+  guard: 6,
+  double: 10,
+  help: 9,
+  steal: 13,
+} as const
+
+/** Below this stamina a player is "gassed": slower and worse at everything. */
+export const GASSED_THRESHOLD = 22
+/** A gassed player's step and contest stats scale by this. */
+export const GASSED_FACTOR = 0.62
+/** Below this stamina a player cannot sprint (drive/cut) until recovered. */
+export const SPRINT_FLOOR = 10
+
+// ---------------------------------------------------------------------------
+// Contest model. Openness dominates; stat deltas swing it; randomness seasons.
+// All probabilities are clamped to [0.03, 0.97].
+// ---------------------------------------------------------------------------
+
+/** Distance to nearest defender (floor units) mapped to full "open". */
+export const OPEN_DISTANCE = 22
+
+/** Shot make: base rates by shot type, before openness/stat/contest. */
+export const SHOT_BASE = {
+  layup: 0.58,
+  two: 0.42,
+  three: 0.34,
+} as const
+
+/** How much a fully-open look adds vs a tightly-covered one. */
+export const OPENNESS_SHOT_WEIGHT = 0.42
+/** Shooting/Finishing attribute delta from 50 scales to at most this. */
+export const SHOT_STAT_WEIGHT = 0.2
+
+/** Block: a contesting defender's interior D vs shot. Higher near the rim. */
+export const BLOCK_BASE_RIM = 0.28
+export const BLOCK_BASE_PERIMETER = 0.07
+export const BLOCK_STAT_WEIGHT = 0.22
+/** A defender must be within this distance to contest/block a shot at all. */
+export const CONTEST_RADIUS = 16
+
+/** Pass steal: a defender near the lane vs the passer's handling/passing. */
+export const PASS_STEAL_BASE = 0.1
+export const PASS_STEAL_STAT_WEIGHT = 0.28
+/** A defender this close to the pass lane can attempt a deflection. */
+export const PASS_LANE_RADIUS = 10
+
+/** On-ball strip while driving into a set defender. */
+export const STRIP_BASE = 0.12
+export const STRIP_STAT_WEIGHT = 0.24
+
+/** Steal-gamble order: reward and the cost of missing (defender out of play). */
+export const GAMBLE_STEAL_BASE = 0.34
+export const GAMBLE_STEAL_STAT_WEIGHT = 0.3
+
+/** Offensive rebound chance on a miss (defense rebounds otherwise). */
+export const OREB_BASE = 0.26
+export const OREB_STAT_WEIGHT = 0.22
+
+// ---------------------------------------------------------------------------
+// Risk glow thresholds (probability of the good outcome → color).
+// ---------------------------------------------------------------------------
+export type Risk = 'good' | 'fair' | 'bad'
+export function riskOf(p: number): Risk {
+  if (p >= 0.55) return 'good'
+  if (p >= 0.35) return 'fair'
+  return 'bad'
 }
-
-/**
- * Coach energy: a flat budget each possession, spent on substitutions and
- * play cards. No carry-over — use it or lose it.
- */
-export const ENERGY_PER_POSSESSION = 3
-export const SUB_COST = 1
-
-/** Roster sizing: athletes per position dealt to each side. */
-export const ROSTER_PER_POSITION = 2
-
-/** Playbook (play-card deck) sizing. */
-export const OPENING_HAND = 3
-export const HAND_CAP = 5
-export const DRAW_PER_TURN = 1
-
-/** Rally: a side trailing by this many points gets +1 coach energy and one
- * extra play card each possession, feeding the rotation engine a comeback. */
-export const RALLY_DEFICIT = 10
-
-/**
- * Positional fit modifiers applied during a clash. The penalty is softer than
- * the bonus so emergency cross-position subs dampen rather than spiral.
- */
-export const FIT_BONUS = 2
-export const MISMATCH_PENALTY = 1
-
-/** Bucket scoring: beating the defender is worth 2, a blowout margin is worth 3. */
-export const THREE_POINT_MARGIN = 4
-
-/** Fatigue model. Every possession on court costs BASE_FATIGUE stamina, plus
- * the lane's attack margin (OFF − DEF) clamped to [CLASH_DAMAGE_MIN,
- * CLASH_DAMAGE_MAX] when beaten. Benched athletes recover BENCH_RECOVERY. */
-export const BASE_FATIGUE = 1
-export const CLASH_DAMAGE_MIN = 1
-export const CLASH_DAMAGE_MAX = 2
-export const BENCH_RECOVERY = 3
-
-/** A gassed athlete (0 STA) plays at this penalty to OFF and DEF. */
-export const GASSED_PENALTY = 3
-
-/** Fouls: a defender beaten by THREE_POINT_MARGIN picks one up; at the limit
- * the athlete fouls out of the game for good. */
-export const FOUL_LIMIT = 4
-
-/** Hustle's per-possession OFF growth stops here so survivors can't snowball. */
-export const HUSTLE_CAP = 3
-
-/** Fast Break triggers against defenders at or below this stamina. */
-export const TIRED_THRESHOLD = 2
-
-/** Game clock (fiction). Tuned so a match lands in a natural basketball range.
- * Overtime is sudden death (first lead after a clash wins); after
- * MAX_OVERTIMES still-tied periods the fresher team wins on conditioning. */
-export const QUARTERS = 4
-export const MAX_OVERTIMES = 2
-export const QUARTER_GAME_SECONDS = 100
-export const POSSESSION_GAME_SECONDS_MIN = 16
-export const POSSESSION_GAME_SECONDS_MAX = 28
-
-/** Shot clock (real-world pressure, seconds). Opt-in via the timed toggle. */
-export const SHOT_CLOCK_SECONDS = 24

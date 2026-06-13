@@ -1,111 +1,99 @@
-/** A lineup slot / natural role for an athlete. */
-export type Position = 'PG' | 'SG' | 'SF' | 'PF' | 'C'
+// Court Clash 2.0 — "The Floor General". Real-time, beat-by-beat half-court
+// 5v5. See SPEC.md for the full design. The engine is a pure reducer over
+// discrete beats; the hook animates between beat snapshots.
 
 export type Side = 'player' | 'ai'
 
-/**
- * deploy       — the coach is making subs/plays under the shot clock
- * quarterBreak  — the game clock hit 0:00; waiting to tip off the next quarter
- * gameover      — a winner has been decided
- *
- * The brief clash "resolving" animation is a UI concern handled by the hook,
- * not a engine phase, so the reducer stays synchronous and pure.
- */
-export type Phase = 'deploy' | 'quarterBreak' | 'gameover'
+/** play — a possession is live. gameover — someone reached the win target. */
+export type Phase = 'play' | 'gameover'
 
-/** Passive athlete abilities (resolved by the engine). */
-export type AbilityKey =
-  | 'fastBreak' // +2 OFF against a tired defender (STA ≤ 2)
-  | 'clutch' // +2 OFF in the 4th quarter and overtime
-  | 'hustle' // +1 OFF per possession on court (max HUSTLE_CAP); resets on sub
-  | 'anchor' // passive wall — flavour for high DEF
-  | 'wall' // flavour for high DEF
-  | 'rebound' // recovers 1 STA per possession on court (cancels base fatigue)
-  | 'iron' // the first time he would gas out, holds at 1 STA
-  | 'playmaker' // +1 coach energy each possession while on court
-  | 'takeover' // +1 OFF to allied lanes
-
-/** One-shot play-card effects (the coach's playbook). */
-export type EffectKey =
-  | 'clutchGene' // +3 OFF to a target ally this clash
-  | 'fastBreakEnergy' // +2 coach energy this possession
-  | 'timeout' // restore 3 STA to a target ally
-  | 'flop' // a target enemy athlete picks up a foul
-  | 'zoneDefense' // all your athletes +2 DEF this clash
-  | 'fullCourtPress' // enemy athletes on court -2 OFF this clash
-
-export interface AthleteCard {
-  id: string
-  name: string
-  kind: 'athlete'
-  position: Position
-  off: number
-  def: number
-  sta: number
-  ability?: AbilityKey
-  abilityText?: string
+/** A point on the logical floor. X is 0..100 left→right, Y is 0..100 from the
+ *  baseline/basket end (small Y, near the rim) to half-court (Y=100). */
+export interface Vec {
+  x: number
+  y: number
 }
 
-export interface PlayCard {
+/** The eight sim attributes (0..99). Never shown as a stat line during play —
+ *  they feed the risk glow and the contest math. */
+export interface Attributes {
+  speed: number
+  handle: number
+  finishing: number
+  shooting: number
+  passing: number
+  strength: number
+  perimeterD: number
+  interiorD: number
+}
+
+/** A player's standing order. Persists across beats until the coach changes it.
+ *  One-shot orders (pass, shoot) clear themselves once resolved. */
+export type Order =
+  // offense
+  | { kind: 'idle' }
+  | { kind: 'move'; to: Vec } // relocate / spot up (jog)
+  | { kind: 'cut'; to: Vec } // hard cut toward a spot (costs stamina)
+  | { kind: 'drive'; to: Vec } // ball handler attacks toward a point
+  | { kind: 'screen'; forId: string } // set a screen for a teammate's defender
+  | { kind: 'pass'; toId: string } // one-shot: ball to a teammate this beat
+  // defense
+  | { kind: 'guard'; markId: string } // man-to-man (default)
+  | { kind: 'double'; markId: string } // send a second defender at the ball
+  | { kind: 'help'; to: Vec } // rotate to a spot / fill a gap
+  | { kind: 'steal'; markId: string } // gamble for a strip/pick (high risk)
+
+export type OrderKind = Order['kind']
+
+export interface Player {
   id: string
+  side: Side
   name: string
-  kind: 'play'
-  cost: number
-  effect: EffectKey
-  target: 'ally' | 'enemy' | 'self' | 'none'
+  number: number
+  role: string // flavor tag derived from attributes (Slasher, Lockdown, …)
+  attr: Attributes
+  pos: Vec
+  stamina: number // 0..100
+  order: Order
+}
+
+/** Transient outcome of the most recent beat/shot, for the UI to animate. */
+export interface BeatEvent {
+  kind:
+    | 'pass'
+    | 'steal'
+    | 'shotMake'
+    | 'shotMiss'
+    | 'block'
+    | 'rebound'
+    | 'turnover'
+    | 'shotclock'
+  from?: Vec
+  to?: Vec
+  by?: string // player id
+  points?: number
   text: string
 }
 
-/**
- * One athlete on a roster, on court or on the bench. Stamina and fouls
- * persist across substitutions; heat (hustle) resets when benched.
- */
-export interface RosterAthlete {
-  /** Unique per roster instance (so mirrored archetypes are distinct). */
-  uid: string
-  card: AthleteCard
-  sta: number
-  fouls: number
-  /** Possessions on court since last sub (drives Hustle). */
-  heat: number
-  /** One-shot OFF/DEF buffs applied by plays, cleared after each clash. */
-  clashOff: number
-  clashDef: number
-  /** Whether the Iron save has already been used. */
-  ironUsed: boolean
-}
-
-export type Lineup = Record<Position, RosterAthlete | null>
-
-export interface PlayerState {
-  side: Side
-  /** Play-card draw pile and hand (the coach's playbook). */
-  deck: PlayCard[]
-  hand: PlayCard[]
-  lineup: Lineup
-  /** Reserves, recovering stamina. Fouled-out athletes leave the roster. */
-  bench: RosterAthlete[]
-  energy: number
-  score: number
-}
-
 export interface GameState {
-  turn: number
-  quarter: number
   phase: Phase
-  /** Fiction seconds left in the current quarter. */
-  gameClock: number
-  players: Record<Side, PlayerState>
+  players: Player[]
+  ballHandlerId: string | null // who has the ball
+  offense: Side // which side is on offense
+  shotClock: number // beats remaining this possession
+  score: Record<Side, number>
+  possession: number // possession counter (animation reset key)
+  beat: number // beat counter within the game
+  winTarget: number
   seed: number
-  /** PRNG cursor — advanced by the engine so randomness is reproducible. */
   rngState: number
+  events: BeatEvent[] // events from the last resolution (for juice + log)
   log: string[]
   winner?: Side
 }
 
 export type Action =
-  | { type: 'SUB'; benchUid: string; slot: Position }
-  | { type: 'PLAY_CARD'; cardId: string; targetSide?: Side; targetSlot?: Position }
-  | { type: 'END_POSSESSION' }
-  | { type: 'ADVANCE_QUARTER' }
+  | { type: 'SET_ORDER'; playerId: string; order: Order }
+  | { type: 'RUN_BEAT' }
+  | { type: 'CALL_SHOT'; playerId: string }
   | { type: 'NEW_GAME'; seed?: number }

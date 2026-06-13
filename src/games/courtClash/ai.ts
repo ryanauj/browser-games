@@ -1,128 +1,100 @@
-import { FOUL_LIMIT, POSITIONS, SUB_COST, TIRED_THRESHOLD } from './constants'
-import { computeClash, playCard, setAiStrategy, subAthlete } from './engine'
-import type { GameState, PlayCard, Position, RosterAthlete } from './types'
+import { BASKET, MAX_SHOT_RANGE, RIM_RADIUS } from './constants'
+import { clampToCourt, distToRim, nearestOpponent, openness } from './geometry'
+import type { GameState, Order, Player, Vec } from './types'
+
+export interface AiPlan {
+  orders: { playerId: string; order: Order }[]
+  /** If set (and the AI is on offense), the CPU pulls the trigger this beat. */
+  shoot?: string
+}
+
+/** Relocate an off-ball player to widen separation from their defender — the
+ *  CPU's way of getting open. Deterministic (no RNG) so the reducer stays pure. */
+function offBallOrder(p: Player, players: Player[]): Order {
+  const def = nearestOpponent(players, p)
+  if (!def) return { kind: 'idle' }
+  const dx = p.pos.x - def.pos.x
+  const dy = p.pos.y - def.pos.y
+  const len = Math.hypot(dx, dy) || 1
+  const to: Vec = clampToCourt({ x: p.pos.x + (dx / len) * 9, y: p.pos.y + (dy / len) * 9 })
+  return { kind: 'move', to }
+}
 
 /**
- * The CPU coach. Pure: takes a state and returns a new state with the AI's
- * moves applied for this possession. Rotation is the hard priority — energy
- * goes to substitutions first, and at most ONE play is called with whatever
- * is left (keeping the CPU beatable and its behaviour legible):
- *   1. Fill any empty slot (foul-out hole) with the best bench athlete.
- *   2. Rest the most-tired athletes and pull anyone one foul from
- *      disqualification out of a lane that projects a foul.
- *   3. One play: Flop > Timeout > Full Court Press > Clutch Gene > Zone.
+ * The CPU floor general. Pure: reads the state, returns orders for its five
+ * (and, on offense, an optional shot). Heuristics kept legible and beatable:
+ *  - Offense: shoot a good/forced look; else swing to a more open teammate;
+ *    else attack the rim. Off-ball men relocate to get open.
+ *  - Defense: man up by matchup; double the ball when the handler gets open,
+ *    pulling the helper off the least dangerous man.
  */
+export function aiPlan(state: GameState): AiPlan {
+  const ai = state.players.filter((p) => p.side === 'ai')
+  const opp = state.players.filter((p) => p.side === 'player')
+  const orders: { playerId: string; order: Order }[] = []
 
-const AI: 'ai' = 'ai'
+  if (state.offense === 'ai') {
+    const handler = ai.find((p) => p.id === state.ballHandlerId)
+    if (!handler) return { orders }
 
-function energy(state: GameState): number {
-  return state.players.ai.energy
-}
+    const open = openness(state.players, handler)
+    const d = distToRim(handler.pos)
+    const inRange = d < MAX_SHOT_RANGE * 0.72
+    const mustShoot = state.shotClock <= 1
+    const goodLook = (open > 0.6 && inRange) || (open > 0.42 && d < RIM_RADIUS + 5)
 
-/** Heuristic value of a bench athlete filling a given slot. */
-function benchValue(a: RosterAthlete, slot: Position): number {
-  const fit = a.card.position === slot ? 3 : -3
-  return a.card.off + a.card.def + a.sta * 0.5 + fit
-}
-
-/** Best bench athlete for a slot who is meaningfully fresher than `minSta`. */
-function bestBenchFor(state: GameState, slot: Position, minSta: number): RosterAthlete | null {
-  let best: RosterAthlete | null = null
-  for (const a of state.players.ai.bench) {
-    if (a.sta <= minSta + 1) continue
-    if (!best || benchValue(a, slot) > benchValue(best, slot)) best = a
-  }
-  return best
-}
-
-function playInHand(state: GameState, effect: PlayCard['effect']): PlayCard | undefined {
-  return state.players.ai.hand.find((c) => c.effect === effect && c.cost <= energy(state))
-}
-
-export function chooseAiTurn(initial: GameState): GameState {
-  let state = initial
-
-  // 1. Fill empty slots first — an empty lane concedes points every clash.
-  for (const pos of POSITIONS) {
-    if (energy(state) < SUB_COST) break
-    if (state.players.ai.lineup[pos]) continue
-    const sub = bestBenchFor(state, pos, -1)
-    if (sub) state = subAthlete(state, AI, sub.uid, pos)
-  }
-
-  // 2. Rotate, most-tired first. Subbing trumps saving energy for plays —
-  //    gassed athletes bleed points and fouls every clash they stay out.
-  const tired = POSITIONS.map((pos) => ({ pos, a: state.players.ai.lineup[pos] }))
-    .filter((x): x is { pos: Position; a: RosterAthlete } => !!x.a && x.a.sta <= TIRED_THRESHOLD)
-    .sort((x, y) => x.a.sta - y.a.sta)
-  for (const { pos, a } of tired) {
-    if (energy(state) < SUB_COST) break
-    const sub = bestBenchFor(state, pos, a.sta)
-    if (sub) state = subAthlete(state, AI, sub.uid, pos)
-  }
-
-  // 2b. Protect foul trouble: pull anyone one foul from fouling out of a lane
-  //     that projects another foul on him.
-  if (energy(state) >= SUB_COST) {
-    const lanes = computeClash(state)
-    for (const lane of lanes) {
-      if (energy(state) < SUB_COST) break
-      if (!lane.aiFoul) continue
-      const a = state.players.ai.lineup[lane.pos]
-      if (!a || a.fouls < FOUL_LIMIT - 1) continue
-      const sub = bestBenchFor(state, lane.pos, -1)
-      if (sub) state = subAthlete(state, AI, sub.uid, lane.pos)
+    // Off-ball men work to get open regardless of the handler's choice.
+    for (const p of ai) {
+      if (p.id === handler.id) continue
+      orders.push({ playerId: p.id, order: offBallOrder(p, state.players) })
     }
-  }
 
-  // 3. One play per possession with leftover energy, in priority order.
-  const lanes = computeClash(state)
-
-  // Flop: best when it disqualifies an opponent outright.
-  const flop = playInHand(state, 'flop')
-  if (flop) {
-    for (const pos of POSITIONS) {
-      const a = state.players.player.lineup[pos]
-      if (a && a.fouls >= FOUL_LIMIT - 1) return playCard(state, AI, flop.id, 'player', pos)
+    if (mustShoot || goodLook) {
+      orders.push({ playerId: handler.id, order: { kind: 'idle' } })
+      return { orders, shoot: handler.id }
     }
+
+    // Swing to a meaningfully more open teammate in scoring range.
+    let bestMate: Player | null = null
+    let bestOpen = open + 0.16
+    for (const m of ai) {
+      if (m.id === handler.id) continue
+      const mo = openness(state.players, m)
+      if (mo > bestOpen && distToRim(m.pos) < MAX_SHOT_RANGE) {
+        bestOpen = mo
+        bestMate = m
+      }
+    }
+    orders.push({
+      playerId: handler.id,
+      order: bestMate ? { kind: 'pass', toId: bestMate.id } : { kind: 'drive', to: { ...BASKET } },
+    })
+    return { orders }
   }
 
-  // Timeout: save a key athlete who is tired with no bench cover.
-  const timeout = playInHand(state, 'timeout')
-  if (timeout) {
-    for (const pos of POSITIONS) {
-      const a = state.players.ai.lineup[pos]
-      if (a && a.sta <= TIRED_THRESHOLD && !bestBenchFor(state, pos, a.sta)) {
-        return playCard(state, AI, timeout.id, AI, pos)
+  // ---- Defense: man up by matchup, then maybe double the ball. ----
+  for (let i = 0; i < ai.length; i++) {
+    orders.push({ playerId: ai[i].id, order: { kind: 'guard', markId: opp[i].id } })
+  }
+  const handler = opp.find((p) => p.id === state.ballHandlerId)
+  if (handler) {
+    const open = openness(state.players, handler)
+    if (open > 0.6 && distToRim(handler.pos) < MAX_SHOT_RANGE * 0.7) {
+      const primaryIdx = opp.findIndex((o) => o.id === handler.id)
+      let helperIdx = -1
+      let leastDanger = Infinity
+      for (let i = 0; i < opp.length; i++) {
+        if (i === primaryIdx) continue
+        const danger = opp[i].attr.shooting + openness(state.players, opp[i]) * 30
+        if (danger < leastDanger) {
+          leastDanger = danger
+          helperIdx = i
+        }
+      }
+      if (helperIdx >= 0) {
+        orders[helperIdx] = { playerId: ai[helperIdx].id, order: { kind: 'double', markId: handler.id } }
       }
     }
   }
-
-  // Full Court Press when trailing.
-  const trailing = state.players.ai.score < state.players.player.score
-  const press = playInHand(state, 'fullCourtPress')
-  if (press && trailing) return playCard(state, AI, press.id)
-
-  // Clutch Gene on a contested lane the CPU is currently losing.
-  const clutch = playInHand(state, 'clutchGene')
-  if (clutch) {
-    for (const lane of lanes) {
-      if (lane.aiHas && lane.playerHas && lane.aiPts === 0) {
-        return playCard(state, AI, clutch.id, AI, lane.pos)
-      }
-    }
-  }
-
-  // Zone Defense when the player projects to outscore the CPU this clash.
-  const zone = playInHand(state, 'zoneDefense')
-  if (zone) {
-    const pProj = lanes.reduce((n, l) => n + l.playerPts, 0)
-    const aProj = lanes.reduce((n, l) => n + l.aiPts, 0)
-    if (pProj > aProj) return playCard(state, AI, zone.id)
-  }
-
-  return state
+  return { orders }
 }
-
-// Register with the engine so the reducer can call it without an import cycle.
-setAiStrategy(chooseAiTurn)
