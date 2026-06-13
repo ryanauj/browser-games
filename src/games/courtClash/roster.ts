@@ -54,6 +54,7 @@ function buildSide(side: Side, names: string[]): Player[] {
     order: { kind: 'idle' } as const,
     stuck: 0,
     screenHeld: 0,
+    primed: 0,
   }))
 }
 

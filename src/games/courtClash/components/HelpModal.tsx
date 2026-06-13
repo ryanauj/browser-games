@@ -26,15 +26,18 @@ export function HelpModal({ onClose }: Props) {
             player — yours or the CPU's — to scout their ratings: each badge shows a
             standout skill, and the panel shows all eight 0–99 stats,{' '}
             <span className="cc-help__good">green</span> (strong) to{' '}
-            <span className="cc-help__bad">red</span> (weak). The blue ring on a selected
-            player is how far they can move this beat — moves clamp to it.
+            <span className="cc-help__bad">red</span> (weak). The solid blue ring on a
+            selected player is how far they jog (a <em>move</em>) this beat; the dashed
+            outer ring is the farther <em>burst</em> a <em>cut</em> or <em>drive</em>
+            reaches — it covers more ground but burns more stamina.
           </li>
           <li>
             <strong>Get someone open.</strong> Openness is everything — a wide-open role
             player beats a covered star. Plant a <em>screen</em> at a spot and any defender
             who runs through it gets hung up for a beat — springing their man. Use screens,
             cuts and passes to get someone open, then tap your ball handler and hit{' '}
-            <em>Shoot</em>. The ring around the ball tells you
+            <em>Shoot</em>. A <em>drive</em> gets downhill and gives your next shot a
+            finishing boost — but a defender in your path can strip it. The ring around the ball tells you
             the look: <span className="cc-help__good">green</span> good,{' '}
             <span className="cc-help__bad">red</span> bad. Inside the arc is 2, beyond it 3.
           </li>

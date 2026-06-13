@@ -113,9 +113,9 @@ export default function CourtClash() {
   }, [pending, byId, yourPlayers, state.players])
 
   // Clamp a destination to one beat's reach from the player's current spot.
-  const reachClamp = (playerId: string, to: Vec): Vec => {
+  const reachClamp = (playerId: string, to: Vec, burst = false): Vec => {
     const p = byId(playerId)
-    return p ? stepToward(p.pos, to, reachOf(p)) : to
+    return p ? stepToward(p.pos, to, reachOf(p, burst)) : to
   }
 
   // --- Interaction ---------------------------------------------------------
@@ -166,6 +166,7 @@ export default function CourtClash() {
       return
     }
     const spot = reachClamp(id, at)
+    const burstSpot = reachClamp(id, at, true) // drives/cuts reach the outer ring
     const target = byId(targetId)
     const onTeammate = !!target && target.side === YOU && target.id !== id
     const onEnemy = !!target && target.side !== YOU
@@ -186,21 +187,20 @@ export default function CourtClash() {
           items.push(mk('Move', '👟', { kind: 'move', to }))
         }
       } else if (onEnemy && target) {
-        const to = reachClamp(id, target.pos)
         if (isHandler) {
-          items.push(mk('Drive', '⚡', { kind: 'drive', to }))
+          items.push(mk('Drive', '⚡', { kind: 'drive', to: reachClamp(id, target.pos, true) }))
           items.push(mk('Move', '👟', { kind: 'move', to: spot }))
         } else {
-          items.push(mk('Screen', '🧱', { kind: 'screen', to }))
+          items.push(mk('Screen', '🧱', { kind: 'screen', to: reachClamp(id, target.pos) }))
           items.push(mk('Move', '👟', { kind: 'move', to: spot }))
         }
       } else if (isHandler) {
-        items.push(mk('Drive', '⚡', { kind: 'drive', to: spot }))
+        items.push(mk('Drive', '⚡', { kind: 'drive', to: burstSpot }))
         items.push(mk('Move', '👟', { kind: 'move', to: spot }))
       } else {
         items.push(mk('Move', '👟', { kind: 'move', to: spot }))
         items.push(mk('Screen', '🧱', { kind: 'screen', to: spot }))
-        items.push(mk('Cut', '✂️', { kind: 'cut', to: spot }))
+        items.push(mk('Cut', '✂️', { kind: 'cut', to: burstSpot }))
       }
     } else if (onEnemy && target) {
       items.push(mk('Guard', '🛡️', { kind: 'guard', markId: target.id }))
@@ -235,9 +235,9 @@ export default function CourtClash() {
           label: 'Pass →',
           run: () => setPending({ playerId: id, need: 'teammate', make: (t) => ({ kind: 'pass', toId: t }), hint: 'Pick a teammate to pass to.', risk: 'pass' }),
         })
-        list.push({ label: 'Drive', run: () => issue(id, { kind: 'drive', to: reachClamp(id, BASKET) }) })
+        list.push({ label: 'Drive', run: () => issue(id, { kind: 'drive', to: reachClamp(id, BASKET, true) }) })
       } else {
-        list.push({ label: 'Cut', run: () => issue(id, { kind: 'cut', to: reachClamp(id, BASKET) }) })
+        list.push({ label: 'Cut', run: () => issue(id, { kind: 'cut', to: reachClamp(id, BASKET, true) }) })
         list.push({
           label: 'Move →',
           run: () => setPending({ playerId: id, need: 'point', make: (pt) => ({ kind: 'move', to: pt }), hint: 'Tap a spot within reach.', clampReach: true }),
