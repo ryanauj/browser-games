@@ -34,8 +34,10 @@ export function HelpModal({ onClose }: Props) {
           </li>
           <li>
             <strong>Get someone open.</strong> Openness is everything — a wide-open role
-            player beats a covered star. Plant a <em>screen</em> at a spot and any defender
-            who runs through it gets hung up for a beat — springing their man. Use screens,
+            player beats a covered star. Set a <em>screen</em> for a teammate — drag a player
+            onto that teammate (or straight onto a defender to pick that man) and your
+            screener chases the defender and hangs them up for a beat or two (watch for the{' '}
+            💥), springing their man. The screener lights up 🧱 once the pick is set. Use screens,
             cuts and passes to get someone open, then tap your ball handler and hit{' '}
             <em>Shoot</em>. A <em>drive</em> gets downhill and gives your next shot a
             finishing boost — but a defender in your path can strip it. The ring around the ball tells you
