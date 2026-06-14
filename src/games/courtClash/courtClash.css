@@ -329,24 +329,38 @@
   line-height: 1;
   pointer-events: none;
 }
+/* Screener: a pick badge, faint while travelling, lit + ringed once planted. */
+.cc-player__screen {
+  position: absolute;
+  top: -9px;
+  left: -8px;
+  font-size: 13px;
+  line-height: 1;
+  pointer-events: none;
+  opacity: 0.7;
+  filter: drop-shadow(0 0 3px rgba(0, 0, 0, 0.7));
+}
+.cc-player--screening {
+  box-shadow: 0 0 0 2px var(--cc-fair);
+}
+.cc-player--planted {
+  box-shadow: 0 0 0 3px var(--cc-fair), 0 0 12px var(--cc-fair);
+}
+.cc-player--planted .cc-player__screen {
+  opacity: 1;
+}
+/* Stuck defender: a clear collision badge + a knocked-back tint. */
 .cc-player__stuck {
   position: absolute;
-  top: -7px;
-  left: -7px;
-  width: 14px;
-  height: 14px;
-  border-radius: 50%;
-  background: var(--cc-fair);
-  color: #1a1206;
-  font-size: 10px;
+  top: -10px;
+  left: -8px;
+  font-size: 15px;
+  line-height: 1;
   pointer-events: none;
-}
-.cc-player__stuck::before {
-  content: '🚧';
-  font-size: 10px;
+  filter: drop-shadow(0 0 3px rgba(0, 0, 0, 0.85));
 }
 .cc-player--stuck {
-  filter: brightness(0.8) saturate(0.7);
+  filter: brightness(0.78) saturate(0.7);
 }
 .cc-player--sel {
   box-shadow: 0 0 0 3px var(--cc-orange);

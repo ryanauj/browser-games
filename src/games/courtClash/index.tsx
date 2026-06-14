@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { BASKET, WIN_TARGET, riskOf, type Risk } from './constants'
 import { passStealChance, shotMakeChance } from './engine'
-import { dist, reachOf, stepToward } from './geometry'
+import { dist, nearestOpponent, reachOf, stepToward } from './geometry'
 import { useCourtClash } from './useCourtClash'
 import type { Order, Side, Vec } from './types'
 import { AttrPanel } from './components/AttrPanel'
@@ -118,6 +118,16 @@ export default function CourtClash() {
     return p ? stepToward(p.pos, to, reachOf(p, burst)) : to
   }
 
+  // A pick "for" a teammate: track the man guarding them (a body, not a spot),
+  // so the screener chases the defender wherever they go. Falls back to the
+  // teammate's spot if no defender is nearby.
+  const screenFor = (mateId: string): Order => {
+    const mate = byId(mateId)
+    const def = mate ? nearestOpponent(state.players, mate) : null
+    if (def) return { kind: 'screen', to: { ...def.pos }, markId: def.id }
+    return { kind: 'screen', to: mate ? { ...mate.pos } : { ...BASKET } }
+  }
+
   // --- Interaction ---------------------------------------------------------
   const issue = (playerId: string, order: Order) => {
     game.setOrder(playerId, order)
@@ -180,18 +190,19 @@ export default function CourtClash() {
     if (onOffense) {
       const isHandler = id === state.ballHandlerId
       if (onTeammate && target) {
-        const to = reachClamp(id, target.pos)
         if (isHandler) items.push(mk('Pass', '🤝', { kind: 'pass', toId: target.id }))
         else {
-          items.push(mk('Screen', '🧱', { kind: 'screen', to }))
-          items.push(mk('Move', '👟', { kind: 'move', to }))
+          // Drop onto a teammate to set a pick FOR them (screen their defender).
+          items.push(mk('Screen', '🧱', screenFor(target.id)))
+          items.push(mk('Move', '👟', { kind: 'move', to: reachClamp(id, target.pos) }))
         }
       } else if (onEnemy && target) {
         if (isHandler) {
           items.push(mk('Drive', '⚡', { kind: 'drive', to: reachClamp(id, target.pos, true) }))
           items.push(mk('Move', '👟', { kind: 'move', to: spot }))
         } else {
-          items.push(mk('Screen', '🧱', { kind: 'screen', to: reachClamp(id, target.pos) }))
+          // Drop onto a defender to screen that man (track them, not the floor).
+          items.push(mk('Screen', '🧱', { kind: 'screen', to: { ...target.pos }, markId: target.id }))
           items.push(mk('Move', '👟', { kind: 'move', to: spot }))
         }
       } else if (isHandler) {
@@ -243,8 +254,14 @@ export default function CourtClash() {
           run: () => setPending({ playerId: id, need: 'point', make: (pt) => ({ kind: 'move', to: pt }), hint: 'Tap a spot within reach.', clampReach: true }),
         })
         list.push({
-          label: 'Screen →',
-          run: () => setPending({ playerId: id, need: 'point', make: (pt) => ({ kind: 'screen', to: pt }), hint: 'Tap where to plant the screen.' }),
+          label: 'Screen for →',
+          run: () =>
+            setPending({
+              playerId: id,
+              need: 'teammate',
+              make: (mateId) => screenFor(mateId),
+              hint: 'Pick the teammate to set a pick for — your screener will chase their defender.',
+            }),
         })
         list.push({ label: 'Spot up', run: () => issue(id, { kind: 'idle' }) })
       }

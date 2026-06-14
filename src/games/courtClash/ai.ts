@@ -7,7 +7,7 @@ import {
   SHOT_STAT_WEIGHT,
   THREE_PT_RADIUS,
 } from './constants'
-import { clampToCourt, distToRim, nearestOpponent, openness, opponentOf, shotType } from './geometry'
+import { clampToCourt, dist, distToRim, nearestOpponent, openness, opponentOf, shotType } from './geometry'
 import type { GameState, Order, Player, Side, Vec } from './types'
 
 const statN = (v: number): number => (v - 50) / 49
@@ -115,6 +115,28 @@ export function aiPlan(state: GameState, side: Side = 'ai'): AiPlan {
     //    once you're in scoring range just take the shot — don't pass-loop into
     //    a turnover or stall the possession.
     if (d > RIM_RADIUS + 12) {
+      // Run a ball-screen as you attack, but only when the handler is actually
+      // hemmed in — a tightly-guarded driver gets a pick from the nearest
+      // teammate; an open driver just goes.
+      const hDef = nearestOpponent(state.players, handler)
+      if (hDef && here.open < 0.4) {
+        let screener: Player | null = null
+        let bestD = Infinity
+        for (const m of ai) {
+          if (m.id === handler.id) continue
+          const dd = dist(m.pos, handler.pos)
+          if (dd < bestD) {
+            bestD = dd
+            screener = m
+          }
+        }
+        if (screener) {
+          const pick: Order = { kind: 'screen', to: { ...hDef.pos }, markId: hDef.id }
+          const idx = orders.findIndex((o) => o.playerId === screener!.id)
+          if (idx >= 0) orders[idx].order = pick
+          else orders.push({ playerId: screener.id, order: pick })
+        }
+      }
       orders.push({ playerId: handler.id, order: { kind: 'drive', to: { ...BASKET } } })
       return { orders }
     }
@@ -125,6 +147,26 @@ export function aiPlan(state: GameState, side: Side = 'ai'): AiPlan {
   // ---- Defense: man up by matchup, then maybe double the ball. ----
   for (let i = 0; i < ai.length; i++) {
     orders.push({ playerId: ai[i].id, order: { kind: 'guard', markId: opp[i].id } })
+  }
+  // Screen defense: if a defender got hung up on a pick, the nearest free
+  // teammate switches onto the man they were guarding so a screen can't leave
+  // an attacker wide open (and can't be farmed for a free man every possession).
+  for (let i = 0; i < ai.length; i++) {
+    if (ai[i].stuck <= 0) continue
+    let best = -1
+    let bestD = Infinity
+    for (let j = 0; j < ai.length; j++) {
+      if (j === i || ai[j].stuck > 0) continue
+      const dd = dist(ai[j].pos, opp[i].pos)
+      if (dd < bestD) {
+        bestD = dd
+        best = j
+      }
+    }
+    if (best >= 0) {
+      orders[i] = { playerId: ai[i].id, order: { kind: 'guard', markId: opp[best].id } }
+      orders[best] = { playerId: ai[best].id, order: { kind: 'guard', markId: opp[i].id } }
+    }
   }
   const handler = opp.find((p) => p.id === state.ballHandlerId)
   if (handler) {

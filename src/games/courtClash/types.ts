@@ -35,7 +35,7 @@ export type Order =
   | { kind: 'move'; to: Vec } // relocate / spot up (jog)
   | { kind: 'cut'; to: Vec } // hard cut toward a spot (costs stamina)
   | { kind: 'drive'; to: Vec } // ball handler attacks toward a point
-  | { kind: 'screen'; to: Vec } // plant a screen at a spot; bumps defenders who run through
+  | { kind: 'screen'; to: Vec; markId?: string } // set a pick; with markId, track that defender (a body, not a spot)
   | { kind: 'pass'; toId: string } // one-shot: ball to a teammate this beat
   // defense
   | { kind: 'guard'; markId: string } // man-to-man (default)

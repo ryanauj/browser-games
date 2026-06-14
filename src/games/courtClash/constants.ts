@@ -90,7 +90,7 @@ export const SCREEN_STAT_WEIGHT = 1.6
 /** A stuck defender moves at this fraction of their step (slowed/screened). */
 export const STUCK_FACTOR = 0.18
 /** A screener is freed (back to idle) after this many beats if it hasn't hit anyone. */
-export const SCREEN_HOLD_MAX = 2
+export const SCREEN_HOLD_MAX = 3
 
 // ---------------------------------------------------------------------------
 // Contest model. Openness dominates; stat deltas swing it; randomness seasons.

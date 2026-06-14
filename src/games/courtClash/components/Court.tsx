@@ -1,8 +1,8 @@
 import { useRef, useState } from 'react'
-import { BASKET, COURT_H, COURT_W, RIM_RADIUS, THREE_PT_RADIUS, type Risk } from '../constants'
+import { BASKET, COURT_H, COURT_W, RIM_RADIUS, SCREEN_RADIUS, THREE_PT_RADIUS, type Risk } from '../constants'
 import { GASSED_THRESHOLD } from '../constants'
 import { signatureAttr } from '../attributes'
-import { reachOf, stepToward } from '../geometry'
+import { dist, reachOf, stepToward } from '../geometry'
 import type { Player, Side, Vec } from '../types'
 
 /** One choice in the post-drag radial menu. The first item is the primary. */
@@ -149,8 +149,8 @@ export function Court(props: CourtProps) {
     .map((p) => {
       const o = p.order
       let to: Vec | null = null
-      if (o.kind === 'move' || o.kind === 'cut' || o.kind === 'drive' || o.kind === 'help' || o.kind === 'screen')
-        to = o.to
+      if (o.kind === 'move' || o.kind === 'cut' || o.kind === 'drive' || o.kind === 'help') to = o.to
+      else if (o.kind === 'screen') to = (o.markId ? players.find((t) => t.id === o.markId)?.pos : null) ?? o.to
       else if (o.kind === 'pass') to = players.find((t) => t.id === o.toId)?.pos ?? null
       else if (o.kind === 'guard' || o.kind === 'steal' || o.kind === 'double') {
         const mk = o.kind === 'double' ? ballHandlerId : (o as { markId: string }).markId
@@ -238,6 +238,14 @@ export function Court(props: CourtProps) {
         const ring = hasBall && isYours && shooterRisk ? ` cc-player--risk-${shooterRisk}` : ''
         const tRisk = targetRisk[p.id]
         const targetCls = isTarget ? ` cc-player--target${tRisk ? ` cc-player--risk-${tRisk}` : ''}` : ''
+        // Screen feedback: a screener shows a pick badge, and goes "planted" once
+        // it reaches the man/spot it's screening.
+        const screenOrder = p.order.kind === 'screen' ? p.order : null
+        const screenTarget = screenOrder
+          ? ((screenOrder.markId ? players.find((t) => t.id === screenOrder.markId)?.pos : null) ?? screenOrder.to)
+          : null
+        const planted = !!screenTarget && dist(p.pos, screenTarget) <= SCREEN_RADIUS
+        const screenCls = screenOrder ? ` cc-player--screening${planted ? ' cc-player--planted' : ''}` : ''
         const sig = signatureAttr(p.attr)
         return (
           <button
@@ -245,7 +253,7 @@ export function Court(props: CourtProps) {
             key={p.id}
             className={`cc-player cc-player--${p.side}${isSel ? ' cc-player--sel' : ''}${
               hasBall ? ' cc-player--ball' : ''
-            }${gassed ? ' cc-player--gassed' : ''}${p.stuck > 0 ? ' cc-player--stuck' : ''}${ring}${targetCls}`}
+            }${gassed ? ' cc-player--gassed' : ''}${p.stuck > 0 ? ' cc-player--stuck' : ''}${screenCls}${ring}${targetCls}`}
             style={{ left: pct(p.pos.x, COURT_W), top: pct(p.pos.y, COURT_H) }}
             onPointerDown={(e) => startDrag(e, p)}
           >
@@ -262,7 +270,16 @@ export function Court(props: CourtProps) {
               />
             </span>
             {hasBall && <span className="cc-player__dot" aria-hidden />}
-            {p.stuck > 0 && <span className="cc-player__stuck" aria-hidden />}
+            {screenOrder && (
+              <span className="cc-player__screen" title={planted ? 'Screen set' : 'Setting screen'} aria-hidden>
+                🧱
+              </span>
+            )}
+            {p.stuck > 0 && (
+              <span className="cc-player__stuck" title="Stuck on a screen" aria-hidden>
+                💥
+              </span>
+            )}
           </button>
         )
       })}
