@@ -19,6 +19,14 @@
 
 ## A. Continuous flow — "real-time, pause anytime"
 
+> **Status update (2026-06-14): tried and reverted.** Phase A.1 (real-time
+> runner + auto-pause + speed control) was built and shipped, then **rolled back
+> to the discrete, tap-to-advance beat loop** after play-testing: the constant
+> auto-pause/redraw/resume cycle felt choppy and "weird," and a beat mid-glide
+> when you paused made sprites appear to keep moving after you'd tapped. The game
+> is once again **beat-by-beat** (`SPEC.md` §4). The ideas below are kept for
+> reference, but real-time is **not** the current direction.
+
 Today a possession is a sequence of discrete **beats** you commit one at a time
 (`SPEC.md` §4). This cluster keeps that discrete, deterministic engine but lets
 beats **chain automatically in real time**, with the floor general free to
