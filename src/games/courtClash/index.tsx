@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { BASKET, WIN_TARGET, riskOf, type Risk } from './constants'
 import { passStealChance, shotMakeChance } from './engine'
 import { dist, reachOf, stepToward } from './geometry'
-import { useCourtClash } from './useCourtClash'
+import { SPEEDS, useCourtClash } from './useCourtClash'
 import type { Order, Side, Vec } from './types'
 import { AttrPanel } from './components/AttrPanel'
 import { Court, type RadialItem } from './components/Court'
@@ -40,7 +40,7 @@ type Pending =
 
 export default function CourtClash() {
   const game = useCourtClash()
-  const { state, animating } = game
+  const { state, animating, playing, speed, beatMs } = game
   const onOffense = state.offense === YOU
 
   const [selectedId, setSelectedId] = useState<string | null>(null)
@@ -129,6 +129,7 @@ export default function CourtClash() {
   const onPlayerTap = (id: string) => {
     const p = byId(id)
     if (!p) return
+    game.pause() // any planning gesture freezes the real-time clock
     if (pending) {
       if (pending.need === 'teammate' && targetable.has(id)) issue(pending.playerId, pending.make(id))
       else if (pending.need === 'enemy' && targetable.has(id)) issue(pending.playerId, pending.make(id))
@@ -160,6 +161,7 @@ export default function CourtClash() {
   // One sensible action (Move/Drive/Help) is the primary; a lone action just
   // fires (drag-to-teammate passes instantly, drag-to-floor on defense helps).
   const onDragRelease = (id: string, at: Vec, targetId: string | null) => {
+    game.pause() // a drag is a plan — stop the clock to set it
     const p = byId(id)
     if (!p || p.side !== YOU) {
       setRadial(null)
@@ -267,11 +269,13 @@ export default function CourtClash() {
 
   const hint = pending
     ? pending.hint
-    : selected
-      ? `${selected.name} (${selected.role}) — pick an action.`
-      : onOffense
-        ? 'Your ball. Drag a player onto a spot or teammate, then pick an action. Tap to inspect.'
-        : 'Defense. Drag onto an opponent to guard/double/steal, or onto a spot to help.'
+    : playing
+      ? 'Playing… tap a player or ⏸ Pause to plan. Auto-pauses on shots & turnovers.'
+      : selected
+        ? `${selected.name} (${selected.role}) — pick an action.`
+        : onOffense
+          ? 'Your ball. Set orders, then ▶ Play. Drag a player onto a spot or teammate to act; tap to inspect.'
+          : 'Defense. Set orders, then ▶ Play. Drag onto an opponent to guard/double/steal, or a spot to help.'
 
   return (
     <div className="cc">
@@ -320,6 +324,7 @@ export default function CourtClash() {
         targetRisk={targetRisk}
         shooterRisk={shooterRisk}
         animating={animating}
+        beatMs={beatMs}
         flash={flash}
         radial={radial}
         onPlayerTap={onPlayerTap}
@@ -348,14 +353,38 @@ export default function CourtClash() {
         ) : (
           <span className="cc__bar-tip">Tap a player to give orders or scout their attributes.</span>
         )}
-        <button
-          type="button"
-          className="cc-btn cc-btn--primary cc__run"
-          onClick={game.runBeat}
-          disabled={animating || state.phase !== 'play'}
-        >
-          Run Beat ▶
-        </button>
+        <div className="cc__transport">
+          <div className="cc__speed" role="group" aria-label="Playback speed">
+            {SPEEDS.map((s) => (
+              <button
+                key={s}
+                type="button"
+                className={`cc-btn cc-btn--speed ${speed === s ? 'cc-btn--speed-on' : ''}`}
+                onClick={() => game.setSpeed(s)}
+                aria-pressed={speed === s}
+              >
+                {s}×
+              </button>
+            ))}
+          </div>
+          <button
+            type="button"
+            className="cc-btn cc__step"
+            onClick={game.runBeat}
+            disabled={playing || animating || state.phase !== 'play'}
+            aria-label="Step one beat"
+          >
+            Step
+          </button>
+          <button
+            type="button"
+            className={`cc-btn cc-btn--primary cc__run ${playing ? 'cc__run--playing' : ''}`}
+            onClick={game.togglePlay}
+            disabled={state.phase !== 'play'}
+          >
+            {playing ? '⏸ Pause' : '▶ Play'}
+          </button>
+        </div>
       </div>
 
       <GameLog lines={state.log} />

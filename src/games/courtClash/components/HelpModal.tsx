@@ -20,8 +20,12 @@ export function HelpModal({ onClose }: Props) {
             your players, beat by beat. <em>Drag</em> a player onto a spot or another
             player and a quick action wheel pops up — Move, Screen, Pass, Guard and
             so on, depending on where you drop. Or <em>tap</em> a player for the same
-            actions as a menu. Set as many orders as you like,
-            then press <em>Run Beat ▶</em> to advance time ~1 second and watch it play out.
+            actions as a menu. Set your orders, then press <em>▶ Play</em> and the
+            game runs in real time. <em>It auto-pauses</em> on every shot, rebound and
+            turnover so you can redraw — or hit <em>⏸ Pause</em> (or just tap a player)
+            anytime to freeze and rethink. Adjust speed with the <em>0.5× / 1× / 2×</em>
+            toggle, or <em>Step</em> one beat at a time while paused. The CPU re-plans
+            every time play stops, so pausing never buys you a free move.
             Orders persist until you change them, so you only touch who you want. Tap any
             player — yours or the CPU's — to scout their ratings: each badge shows a
             standout skill, and the panel shows all eight 0–99 stats,{' '}
