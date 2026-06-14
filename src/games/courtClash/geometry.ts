@@ -59,7 +59,10 @@ export function distToSegment(p: Vec, a: Vec, b: Vec): number {
 export function shotType(from: Vec): 'layup' | 'two' | 'three' {
   const d = distToRim(from)
   if (d <= RIM_RADIUS) return 'layup'
-  return d > THREE_PT_RADIUS ? 'three' : 'two'
+  // Corner threes sit closer to the rim than the arc up top — model the real
+  // shape: near the baseline and out by the sideline counts as a three.
+  const inCorner = from.y <= 16 && (from.x <= 14 || from.x >= COURT_W - 14)
+  return d > THREE_PT_RADIUS || inCorner ? 'three' : 'two'
 }
 
 export function shotPoints(from: Vec): number {
@@ -101,7 +104,7 @@ export function openness(players: Player[], shooter: Player): number {
   let open = Math.max(0, Math.min(1, d / OPEN_DISTANCE))
   // Defender between shooter and rim contests harder.
   const contestPath = distToSegment(def.pos, shooter.pos, BASKET)
-  if (contestPath < 8) open *= 0.6 + 0.4 * Math.min(1, contestPath / 8)
+  if (contestPath < 8) open *= 0.68 + 0.32 * Math.min(1, contestPath / 8)
   return Math.max(0, Math.min(1, open))
 }
 

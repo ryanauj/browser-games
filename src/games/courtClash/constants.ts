@@ -97,40 +97,43 @@ export const SCREEN_HOLD_MAX = 2
 // All probabilities are clamped to [0.03, 0.97].
 // ---------------------------------------------------------------------------
 
-/** Distance to nearest defender (floor units) mapped to full "open". */
-export const OPEN_DISTANCE = 22
+/** Distance to nearest defender (floor units) mapped to full "open". A real
+ *  step of separation should read as a clean look, so this is tuned tight. */
+export const OPEN_DISTANCE = 14
 
-/** Shot make: base rates by shot type, before openness/stat/contest. */
+/** Shot make: base rates by shot type, before openness/stat/contest. Tuned so a
+ *  WIDE-OPEN look lands near real rates (~72% layup, ~50% mid 2, ~40% three) and
+ *  a contested one falls off hard — see shotMakeChance. */
 export const SHOT_BASE = {
-  layup: 0.58,
-  two: 0.42,
-  three: 0.34,
+  layup: 0.52,
+  two: 0.28,
+  three: 0.22,
 } as const
 
 /** How much a fully-open look adds vs a tightly-covered one. */
-export const OPENNESS_SHOT_WEIGHT = 0.42
+export const OPENNESS_SHOT_WEIGHT = 0.26
 /** Shooting/Finishing attribute delta from 50 scales to at most this. */
 export const SHOT_STAT_WEIGHT = 0.2
 
 /** Block: a contesting defender's interior D vs shot. Higher near the rim. */
-export const BLOCK_BASE_RIM = 0.28
-export const BLOCK_BASE_PERIMETER = 0.07
+export const BLOCK_BASE_RIM = 0.15
+export const BLOCK_BASE_PERIMETER = 0.035
 export const BLOCK_STAT_WEIGHT = 0.22
 /** A defender must be within this distance to contest/block a shot at all. */
-export const CONTEST_RADIUS = 16
+export const CONTEST_RADIUS = 11
 
 /** Pass steal: a defender near the lane vs the passer's handling/passing. */
-export const PASS_STEAL_BASE = 0.1
+export const PASS_STEAL_BASE = 0.05
 export const PASS_STEAL_STAT_WEIGHT = 0.28
 /** A defender this close to the pass lane can attempt a deflection. */
-export const PASS_LANE_RADIUS = 10
+export const PASS_LANE_RADIUS = 8
 
 /** On-ball strip while driving into a set defender. */
-export const STRIP_BASE = 0.12
+export const STRIP_BASE = 0.08
 export const STRIP_STAT_WEIGHT = 0.24
 
 /** Steal-gamble order: reward and the cost of missing (defender out of play). */
-export const GAMBLE_STEAL_BASE = 0.34
+export const GAMBLE_STEAL_BASE = 0.18
 export const GAMBLE_STEAL_STAT_WEIGHT = 0.3
 
 /** Offensive rebound chance on a miss (defense rebounds otherwise). */
