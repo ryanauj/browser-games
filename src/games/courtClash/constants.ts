@@ -92,6 +92,16 @@ export const STUCK_FACTOR = 0.18
 /** A screener is freed (back to idle) after this many beats if it hasn't hit anyone. */
 export const SCREEN_HOLD_MAX = 3
 
+// --- Bodies take up space ---------------------------------------------------
+/** Min distance (floor units) between any two players after a beat resolves —
+ *  bodies are nudged apart so nobody ends a beat stacked on top of someone. Kept
+ *  small so a defender can still contest tightly without overlapping centers. */
+export const SEPARATION_MIN = 3
+/** A player setting a screen is a SOLID body: opponents can't move through them,
+ *  they must go around (the physical half of a pick). Slightly larger than the
+ *  separation gap so the block resolves before separation would. */
+export const SCREEN_BODY = 6
+
 // ---------------------------------------------------------------------------
 // Contest model. Openness dominates; stat deltas swing it; randomness seasons.
 // All probabilities are clamped to [0.03, 0.97].
