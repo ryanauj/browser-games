@@ -13,6 +13,12 @@ import { HelpModal } from './components/HelpModal'
 import './courtClash.css'
 
 const HELP_SEEN_KEY = 'courtclash-help-seen'
+const COACHED_KEY = 'courtclash-coached'
+/** First-run, learn-by-doing nudges — advance as the player actually acts. */
+const COACH_STEPS = [
+  '👋 Tap one of your players (blue) to give an order — or drag them onto a teammate or an open spot.',
+  '👍 Pick an action, then press ▶ Next Beat to run it. Orders stay until you change them.',
+]
 const YOU: Side = 'player'
 /** Floor-unit radius for treating overlapping sprites as a tappable stack. */
 const STACK_RADIUS = 9
@@ -55,6 +61,13 @@ export default function CourtClash() {
     setHelpOpen(false)
   }, [])
 
+  // -1 = coaching done; 0..n = current learn-by-doing step.
+  const [coachStep, setCoachStep] = useState(() => (readStored(COACHED_KEY) === '1' ? -1 : 0))
+  const finishCoach = useCallback(() => {
+    writeStored(COACHED_KEY, '1')
+    setCoachStep(-1)
+  }, [])
+
   const yourPlayers = useMemo(() => state.players.filter((p) => p.side === YOU), [state.players])
   const byId = useCallback((id: string | null) => state.players.find((p) => p.id === id), [state.players])
   const ballHandler = byId(state.ballHandlerId)
@@ -66,6 +79,11 @@ export default function CourtClash() {
     setPending(null)
     setRadial(null)
   }, [state.possession, state.beat, state.phase])
+
+  // First-run coach: advance from "tap a player" once they've selected one.
+  useEffect(() => {
+    if (coachStep === 0 && selectedId) setCoachStep(1)
+  }, [coachStep, selectedId])
 
   // Surface the latest beat event as a brief flash.
   useEffect(() => {
@@ -263,7 +281,7 @@ export default function CourtClash() {
               hint: 'Pick the teammate to set a pick for — your screener will chase their defender.',
             }),
         })
-        list.push({ label: 'Spot up', run: () => issue(id, { kind: 'idle' }) })
+        list.push({ label: 'Hold (rest)', run: () => issue(id, { kind: 'idle' }) })
       }
     } else {
       list.push({
@@ -287,8 +305,8 @@ export default function CourtClash() {
     : selected
       ? `${selected.name} (${selected.role}) — pick an action.`
       : onOffense
-        ? 'Your ball. Set orders, then ▶ Next Beat. Drag a player onto a spot or teammate to act; tap to inspect.'
-        : 'Defense. Set orders, then ▶ Next Beat. Drag onto an opponent to guard/double/steal, or a spot to help.'
+        ? 'Your ball. Tap a player (or drag onto a spot/teammate) to set an order, then ▶ Next Beat.'
+        : "Defense. Drag one of your players onto the CPU's ball handler to guard, double, or steal — then ▶ Next Beat."
 
   return (
     <div className="cc">
@@ -317,7 +335,10 @@ export default function CourtClash() {
         </div>
         <div className="cc__center">
           <div className="cc__possession">{onOffense ? '◀ OFFENSE' : 'DEFENSE ▶'}</div>
-          <div className={`cc__shotclock ${state.shotClock <= 3 ? 'cc__shotclock--warn' : ''}`}>:{String(state.shotClock).padStart(2, '0')}</div>
+          <div className="cc__shotclock-cap">shot clock · beats</div>
+          <div className={`cc__shotclock ${state.shotClock <= 3 ? 'cc__shotclock--warn' : ''}`} aria-label={`Shot clock: ${state.shotClock} beats`}>
+            {String(state.shotClock).padStart(2, '0')}
+          </div>
           <div className="cc__to">first to {WIN_TARGET}</div>
         </div>
         <div className={`cc__score ${!onOffense ? 'cc__score--live' : ''}`}>
@@ -325,6 +346,15 @@ export default function CourtClash() {
           <span className="cc__score-num">{state.score.ai}</span>
         </div>
       </div>
+
+      {coachStep >= 0 && state.phase === 'play' && (
+        <div className="cc__coach" role="status">
+          <span className="cc__coach-text">{COACH_STEPS[coachStep]}</span>
+          <button type="button" className="cc__coach-x" onClick={finishCoach} aria-label="Dismiss tips">
+            Got it ✕
+          </button>
+        </div>
+      )}
 
       <p className={`cc__hint ${pending ? 'cc__hint--active' : ''}`}>{hint}</p>
 
@@ -370,7 +400,10 @@ export default function CourtClash() {
           <button
             type="button"
             className="cc-btn cc-btn--primary cc__run"
-            onClick={game.runBeat}
+            onClick={() => {
+              game.runBeat()
+              if (coachStep >= 0) finishCoach()
+            }}
             disabled={animating || state.phase !== 'play'}
           >
             ▶ Next Beat
