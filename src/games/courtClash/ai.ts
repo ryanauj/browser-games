@@ -1,5 +1,6 @@
 import {
   BASKET,
+  HELP_PAINT_RADIUS,
   MAX_SHOT_RANGE,
   OPENNESS_SHOT_WEIGHT,
   RIM_RADIUS,
@@ -99,7 +100,8 @@ export function aiPlan(state: GameState, side: Side = 'ai'): AiPlan {
       return { orders, shoot: handler.id }
     }
 
-    // 2) Swing to a teammate with a clearly better look (worth the pass risk).
+    // 2) Swing to a teammate with a clearly better look (the drive-and-kick:
+    //    when help rotates to the rim, the man it left is the open three).
     let bestMate: Player | null = null
     let bestMateEV = here.ev + 0.15
     for (const m of ai) {
@@ -175,8 +177,37 @@ export function aiPlan(state: GameState, side: Side = 'ai'): AiPlan {
   const handler = opp.find((p) => p.id === state.ballHandlerId)
   if (handler) {
     const open = openness(state.players, handler)
-    if (open > 0.6 && distToRim(handler.pos) < MAX_SHOT_RANGE * 0.7) {
-      const primaryIdx = opp.findIndex((o) => o.id === handler.id)
+    const rimD = distToRim(handler.pos)
+    const primaryIdx = opp.findIndex((o) => o.id === handler.id)
+    if (rimD < HELP_PAINT_RADIUS && open > 0.45) {
+      // A driver beat their man into the paint: the nearest rim defender rotates
+      // over to wall off the basket (contesting the layup). This leaves that
+      // helper's man open — a real help-and-recover tradeoff the offense can
+      // punish by kicking out, which is exactly what we want it weighing.
+      let helperIdx = -1
+      let bestD = Infinity
+      for (let i = 0; i < opp.length; i++) {
+        if (i === primaryIdx) continue
+        const dd = distToRim(ai[i].pos)
+        if (dd < bestD) {
+          bestD = dd
+          helperIdx = i
+        }
+      }
+      if (helperIdx >= 0) {
+        // Stand just inside the rim on the driver's approach line.
+        const vx = handler.pos.x - BASKET.x
+        const vy = handler.pos.y - BASKET.y
+        const vlen = Math.hypot(vx, vy) || 1
+        const spot = clampToCourt({
+          x: BASKET.x + (vx / vlen) * (RIM_RADIUS - 2),
+          y: BASKET.y + (vy / vlen) * (RIM_RADIUS - 2),
+        })
+        orders[helperIdx] = { playerId: ai[helperIdx].id, order: { kind: 'help', to: spot } }
+      }
+    } else if (open > 0.6 && rimD < MAX_SHOT_RANGE * 0.7) {
+      // Open on the perimeter: send a second body at the ball, pulled off the
+      // least dangerous man.
       let helperIdx = -1
       let leastDanger = Infinity
       for (let i = 0; i < opp.length; i++) {
