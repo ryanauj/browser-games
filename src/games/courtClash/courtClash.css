@@ -502,42 +502,10 @@
   gap: 8px;
   margin-left: auto;
 }
-.cc__speed {
-  display: inline-flex;
-  border: 1px solid var(--cc-line);
-  border-radius: 8px;
-  overflow: hidden;
-}
-.cc-btn--speed {
-  min-height: 44px;
-  min-width: 40px;
-  border: none;
-  border-radius: 0;
-  border-right: 1px solid var(--cc-line);
-  background: var(--cc-panel);
-  font-size: 0.85rem;
-  padding: 0 8px;
-}
-.cc-btn--speed:last-child {
-  border-right: none;
-}
-.cc-btn--speed-on {
-  background: var(--cc-panel-2);
-  color: var(--cc-orange);
-  font-weight: 800;
-}
-.cc__step {
-  min-height: 48px;
-  min-width: 64px;
-}
 .cc__run {
   min-width: 124px;
   min-height: 48px;
   font-size: 1rem;
-}
-.cc__run--playing {
-  background: var(--cc-panel-2);
-  color: var(--cc-text);
 }
 @media (max-width: 520px) {
   .cc__transport {
