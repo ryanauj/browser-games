@@ -84,10 +84,15 @@ export function Court(props: CourtProps) {
     setDrag({ ...drag, to, moved: drag.moved || moved })
   }
 
-  // Clamp a drag target to one beat's reach for the dragged player.
+  // True when your side has the ball — only then are burst orders (drive/cut)
+  // available, so the outer reach ring is meaningful.
+  const onOffense = players.find((p) => p.id === ballHandlerId)?.side === yourSide
+
+  // Clamp a drag target to one beat's reach for the dragged player. On offense
+  // the ghost can stretch to the burst (outer) ring; on defense, the jog ring.
   const clampDrag = (id: string, to: Vec): Vec => {
     const p = players.find((pl) => pl.id === id)
-    return p ? stepToward(p.pos, to, reachOf(p)) : to
+    return p ? stepToward(p.pos, to, reachOf(p, onOffense)) : to
   }
 
   // Nearest player (any side) under the drop point, if the drag ended on one.
@@ -121,6 +126,19 @@ export function Court(props: CourtProps) {
   }
 
   const pct = (v: number, span: number) => `${(v / span) * 100}%`
+
+  // Position the radial at the drop point but nudge it inward so every button
+  // stays on-court (the menu fans upward, so it needs more room above).
+  const radialAnchor = (at: Vec): React.CSSProperties => {
+    const rect = ref.current?.getBoundingClientRect()
+    if (!rect) return { left: pct(at.x, COURT_W), top: pct(at.y, COURT_H) }
+    const SIDE = 90 // half the fan's width
+    const TOP = 94 // fan reaches up by ~58 + button radius
+    const BOTTOM = 38
+    const cx = Math.max(SIDE, Math.min(rect.width - SIDE, (at.x / COURT_W) * rect.width))
+    const cy = Math.max(TOP, Math.min(rect.height - BOTTOM, (at.y / COURT_H) * rect.height))
+    return { left: `${cx}px`, top: `${cy}px` }
+  }
 
   // Standing-order route lines for your players.
   const routes = players
@@ -189,9 +207,20 @@ export function Court(props: CourtProps) {
             return <line x1={drag.from.x} y1={drag.from.y} x2={c.x} y2={c.y} className="cc-route cc-route--ghost" />
           })()}
         {(() => {
-          const sel = players.find((p) => p.id === selectedId && p.side === yourSide)
-          if (!sel) return null
-          return <circle cx={sel.pos.x} cy={sel.pos.y} r={reachOf(sel)} className="cc-reach" />
+          // Reach rings on the dragged player (else the selected one): solid inner
+          // = jog (move), dashed outer = burst (cut/drive, offense only).
+          const rp =
+            (drag && players.find((p) => p.id === drag.id)) ||
+            players.find((p) => p.id === selectedId && p.side === yourSide)
+          if (!rp) return null
+          return (
+            <>
+              {onOffense && (
+                <circle cx={rp.pos.x} cy={rp.pos.y} r={reachOf(rp, true)} className="cc-reach cc-reach--burst" />
+              )}
+              <circle cx={rp.pos.x} cy={rp.pos.y} r={reachOf(rp)} className="cc-reach" />
+            </>
+          )
         })()}
       </svg>
 
@@ -238,7 +267,7 @@ export function Court(props: CourtProps) {
 
       {radial && (
         <div className="cc-radial-backdrop" onPointerDown={() => onRadialCancel()}>
-          <div className="cc-radial" style={{ left: pct(radial.at.x, COURT_W), top: pct(radial.at.y, COURT_H) }}>
+          <div className="cc-radial" style={radialAnchor(radial.at)}>
             {radial.items.map((it, i) => {
               // Item 0 sits at the drop point; the rest fan out in an upward arc.
               const sec = radial.items.length - 1

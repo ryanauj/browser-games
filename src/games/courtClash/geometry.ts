@@ -1,6 +1,7 @@
 import {
   BASE_STEP,
   BASKET,
+  BURST_FACTOR,
   COURT_H,
   COURT_W,
   MAX_SHOT_RANGE,
@@ -19,10 +20,10 @@ export function dist(a: Vec, b: Vec): number {
 /** Floor units a player can cover in one beat. Driven by speed, then scaled
  *  continuously by stamina (so fatigue is always felt, not just past a cliff).
  *  The single source of truth for movement, the reach ring, and drag clamping. */
-export function reachOf(p: Player): number {
+export function reachOf(p: Player, burst = false): number {
   const base = BASE_STEP + (p.attr.speed / 99) * SPEED_STEP_BONUS
   const staminaFactor = STAMINA_REACH_MIN + (1 - STAMINA_REACH_MIN) * (p.stamina / 100)
-  return base * staminaFactor
+  return base * staminaFactor * (burst ? BURST_FACTOR : 1)
 }
 
 export function distToRim(p: Vec): number {

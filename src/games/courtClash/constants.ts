@@ -69,6 +69,12 @@ export const GASSED_FACTOR = 0.62
 export const STAMINA_REACH_MIN = 0.5
 /** Below this stamina a player cannot sprint (drive/cut) until recovered. */
 export const SPRINT_FLOOR = 10
+/** Drives and cuts are explosive: they cover this multiple of a jog's reach,
+ *  paying the higher stamina cost for the extra ground. */
+export const BURST_FACTOR = 1.4
+/** A ball handler who drove last beat gets this added to their next shot's make
+ *  chance — downhill momentum into the finish. Consumed by the shot. */
+export const DRIVE_FINISH_BONUS = 0.12
 
 // ---------------------------------------------------------------------------
 // Screens. A planted screen bumps any defender who runs through it, sticking
