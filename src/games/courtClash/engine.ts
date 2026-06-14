@@ -14,9 +14,11 @@ import {
   PASS_STEAL_BASE,
   PASS_STEAL_STAT_WEIGHT,
   SCREEN_BASE,
+  SCREEN_BODY,
   SCREEN_HOLD_MAX,
   SCREEN_MAX,
   SCREEN_RADIUS,
+  SEPARATION_MIN,
   SHOT_BASE,
   SHOT_CLOCK_BEATS,
   SHOT_CLOCK_RESET_OREB,
@@ -209,8 +211,59 @@ function resolveScreens(players: Player[]): void {
   }
 }
 
+/** Clamp a move so it can't pass through a solid body: if the path from→to
+ *  enters within `radius` of any blocker, stop at the body's edge. Movers that
+ *  start already inside a blocker's radius aren't trapped (so they can step out). */
+function blockedStep(from: Vec, to: Vec, blockers: Player[], radius: number): Vec {
+  const dx = to.x - from.x
+  const dy = to.y - from.y
+  const len2 = dx * dx + dy * dy
+  if (len2 < 1e-9) return to
+  let bestT = 1
+  for (const b of blockers) {
+    const fx = from.x - b.pos.x
+    const fy = from.y - b.pos.y
+    const c = fx * fx + fy * fy - radius * radius
+    if (c <= 0) continue // already inside this body — don't trap the mover
+    const bb = 2 * (fx * dx + fy * dy)
+    const disc = bb * bb - 4 * len2 * c
+    if (disc < 0) continue
+    const t = (-bb - Math.sqrt(disc)) / (2 * len2) // earliest entry into the body
+    if (t >= 0 && t < bestT) bestT = t
+  }
+  return bestT >= 1 ? to : { x: from.x + dx * bestT, y: from.y + dy * bestT }
+}
+
+/** Resolve overlaps so no two players end a beat stacked: a couple of relaxation
+ *  passes push bodies apart to SEPARATION_MIN. Deterministic (fixed order). The
+ *  ball handler is exempt — a drive to the rim draws contact (the defense
+ *  contests via shot odds, not by physically blocking the basket). */
+function separateBodies(players: Player[], ballHandlerId: string | null): void {
+  for (let iter = 0; iter < 2; iter++) {
+    for (let i = 0; i < players.length; i++) {
+      for (let j = i + 1; j < players.length; j++) {
+        const a = players[i]
+        const b = players[j]
+        if (a.id === ballHandlerId || b.id === ballHandlerId) continue
+        const dx = b.pos.x - a.pos.x
+        const dy = b.pos.y - a.pos.y
+        let d = Math.hypot(dx, dy)
+        if (d >= SEPARATION_MIN) continue
+        // Coincident bodies push apart along a fixed axis so replay stays exact.
+        const ux = d < 1e-6 ? 1 : dx / d
+        const uy = d < 1e-6 ? 0 : dy / d
+        const push = (SEPARATION_MIN - d) / 2
+        a.pos = clampToCourt({ x: a.pos.x - ux * push, y: a.pos.y - uy * push })
+        b.pos = clampToCourt({ x: b.pos.x + ux * push, y: b.pos.y + uy * push })
+      }
+    }
+  }
+}
+
 function applyMovement(players: Player[], ballHandlerId: string | null): void {
   const ballHandler = byId(players, ballHandlerId)
+  // Opponents setting a screen are solid bodies you must go around, not through.
+  const screeners = players.filter((s) => s.order.kind === 'screen')
   for (const p of players) {
     // Sprint floor: too gassed to drive/cut — degrade to a jog in place.
     if ((p.order.kind === 'drive' || p.order.kind === 'cut') && p.stamina < SPRINT_FLOOR) {
@@ -223,7 +276,10 @@ function applyMovement(players: Player[], ballHandlerId: string | null): void {
     if (p.order.kind === 'drive') p.primed = 1
     const target = targetFor(p, players, ballHandler)
     if (target) {
-      p.pos = clampToCourt(stepToward(p.pos, target, step))
+      const want = stepToward(p.pos, target, step)
+      // Can't run through a planted screener — go around (the physical pick).
+      const blockers = screeners.filter((s) => s.side !== p.side && s.id !== p.id)
+      p.pos = clampToCourt(blockedStep(p.pos, want, blockers, SCREEN_BODY))
       // A direct move is one beat: once arrived, drop to idle so the coach
       // re-orders (and the player recovers) rather than drifting on.
       if (ONE_BEAT_MOVES.has(p.order.kind) && dist(p.pos, target) < 1.2) p.order = { kind: 'idle' }
@@ -231,6 +287,8 @@ function applyMovement(players: Player[], ballHandlerId: string | null): void {
     const cost = STAMINA_COST[p.order.kind]
     p.stamina = Math.max(0, Math.min(100, p.stamina - cost))
   }
+  // Off-ball bodies never end a beat stacked on each other.
+  separateBodies(players, ballHandlerId)
 }
 
 // ---------------------------------------------------------------------------
