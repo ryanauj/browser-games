@@ -514,9 +514,20 @@ export function reducer(state: GameState, action: Action): GameState {
     }
     case 'RUN_BEAT':
       return runBeat(state)
-    case 'CALL_SHOT':
+    case 'CALL_SHOT': {
       if (state.phase !== 'play') return state
-      return resolveShot(state, action.playerId)
+      // Let the defense close out one beat before the shot resolves — the same
+      // courtesy the CPU's shots get (which resolve post-movement in runBeat).
+      // Without this, a human could shoot before any defender recovered. The
+      // shooter is planted so they don't drift; we move only (no timer decay) so
+      // a fresh drive's finishing boost still counts.
+      const players = state.players.map((p) => ({ ...p, pos: { ...p.pos } }))
+      const shooter = byId(players, action.playerId)
+      if (!shooter) return state
+      shooter.order = { kind: 'idle' }
+      applyMovement(players, state.ballHandlerId)
+      return resolveShot({ ...state, players }, action.playerId)
+    }
     case 'NEW_GAME':
       return createInitialState(action.seed)
     default:

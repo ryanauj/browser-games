@@ -23,7 +23,11 @@ function shotEV(p: Player, players: Player[]): { ev: number; open: number } {
     0.03,
     Math.min(0.97, SHOT_BASE[type] + OPENNESS_SHOT_WEIGHT * (open - 0.4) + statN(skill) * SHOT_STAT_WEIGHT),
   )
-  return { ev: make * (type === 'three' ? 3 : 2), open }
+  let ev = make * (type === 'three' ? 3 : 2)
+  // Long-two tax: the settled mid-range jumper is the worst shot in basketball.
+  // Discount it so the CPU prefers getting to the rim or kicking out for three.
+  if (type === 'two' && distToRim(p.pos) > RIM_RADIUS + 6) ev *= 0.85
+  return { ev, open }
 }
 
 export interface AiPlan {
@@ -111,9 +115,9 @@ export function aiPlan(state: GameState, side: Side = 'ai'): AiPlan {
       return { orders }
     }
 
-    // 3) Nothing better on offer: attack from outside to collapse the D, but
-    //    once you're in scoring range just take the shot — don't pass-loop into
-    //    a turnover or stall the possession.
+    // 3) Nothing better on offer: attack toward the rim to collapse the D rather
+    //    than settling for a long two; only take the shot from here once you're
+    //    near the basket (don't pass-loop into a turnover or stall).
     if (d > RIM_RADIUS + 12) {
       // Run a ball-screen as you attack, but only when the handler is actually
       // hemmed in — a tightly-guarded driver gets a pick from the nearest
