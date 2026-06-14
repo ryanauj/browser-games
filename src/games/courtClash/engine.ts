@@ -376,6 +376,17 @@ function resolveShot(state: GameState, shooterId: string): GameState {
   return setupPossession({ ...state, players, rngState: r.next, events, log }, def, SHOT_CLOCK_BEATS, log)
 }
 
+/** Advance one beat of motion: decay screen/drive timers, resolve planted
+ *  screens, then move every player along their standing order. Mutates players. */
+function advanceMotion(players: Player[], ballHandlerId: string | null): void {
+  for (const p of players) {
+    if (p.stuck > 0) p.stuck -= 1
+    if (p.primed > 0) p.primed -= 1 // a finishing boost expires if no shot followed
+  }
+  resolveScreens(players)
+  applyMovement(players, ballHandlerId)
+}
+
 function runBeat(state: GameState): GameState {
   if (state.phase === 'gameover') return state
 
@@ -384,18 +395,39 @@ function runBeat(state: GameState): GameState {
   let events: BeatEvent[] = []
   let log = state.log
 
-  // 1. CPU floor general orders its five (and may pull the trigger on offense).
+  // 1. The CPU floor general sets its five's orders (and may commit to a shot).
+  //    The opponent's orders persist from the human/standing orders.
   const plan = aiPlan({ ...state, players })
   for (const o of plan.orders) {
     const p = byId(players, o.playerId)
     if (p) p.order = o.order
   }
+
+  // 2. MOVEMENT FIRST: everyone moves this beat — including the defense's
+  //    closeouts and rotations — BEFORE any contest resolves. This is what makes
+  //    defense matter: a shot/pass/drive is judged against where defenders end
+  //    up, not where they started.
+  advanceMotion(players, state.ballHandlerId)
+
+  const handler = byId(players, state.ballHandlerId)
+
+  // 3. A committed CPU shot resolves against the post-movement floor — but the
+  //    CPU re-reads the look after the defense closes out: if a hard contest
+  //    arrived, it passes the shot up (resets) unless the clock forces it. This
+  //    is how a good closeout *deters* a shot, not just lowers its odds.
   if (plan.shoot && state.offense === 'ai') {
-    return resolveShot({ ...state, players, rngState: r.next }, plan.shoot)
+    const shooter = byId(players, plan.shoot)
+    const mustShoot = state.shotClock <= 1
+    // A three needs a real window post-closeout; rim/mid looks are taken unless
+    // truly smothered.
+    const need = shooter && shotType(shooter.pos) === 'three' ? 0.45 : 0.22
+    if (shooter && (mustShoot || openness(players, shooter) > need)) {
+      return resolveShot({ ...state, players, rngState: r.next }, plan.shoot)
+    }
+    // Shot passed up; ball stays, clock ticks, the CPU re-plans next beat.
   }
 
-  // 2. A pass called by the ball handler resolves this beat (one-shot).
-  const handler = byId(players, state.ballHandlerId)
+  // 4. A pass called by the ball handler resolves this beat (one-shot).
   if (handler && handler.order.kind === 'pass') {
     const target = byId(players, handler.order.toId)
     handler.order = { kind: 'idle' }
@@ -407,11 +439,11 @@ function runBeat(state: GameState): GameState {
         return setupPossession({ ...state, players, rngState: r.next, events, log }, thief.side, SHOT_CLOCK_BEATS, log)
       }
       events.push({ kind: 'pass', from: handler.pos, to: target.pos, by: target.id, text: 'Pass' })
-      return decClockAndMove({ ...state, players, ballHandlerId: target.id, rngState: r.next, events, log })
+      return finalizeClock({ ...state, players, ballHandlerId: target.id, rngState: r.next, events, log })
     }
   }
 
-  // 3. On-ball gambles & strips.
+  // 5. On-ball gambles & strips, judged on post-movement positions.
   if (handler) {
     const gambler = players.find(
       (d) => d.side !== handler.side && d.order.kind === 'steal' && dist(d.pos, handler.pos) <= 8,
@@ -439,28 +471,21 @@ function runBeat(state: GameState): GameState {
     }
   }
 
-  return decClockAndMove({ ...state, players, rngState: r.next, events, log })
+  return finalizeClock({ ...state, players, rngState: r.next, events, log })
 }
 
-function decClockAndMove(state: GameState): GameState {
-  const players = state.players.map((p) => ({ ...p, pos: { ...p.pos } }))
-  // Decay any lingering screen-stick from a prior beat, then set fresh picks so
-  // a connection persists into the rendered state (slow + indicator) this beat.
-  for (const p of players) {
-    if (p.stuck > 0) p.stuck -= 1
-    if (p.primed > 0) p.primed -= 1 // a finishing boost expires if no shot followed
-  }
-  resolveScreens(players)
-  applyMovement(players, state.ballHandlerId)
+/** Tick the shot clock after a beat's motion + contests have resolved. Motion
+ *  already happened this beat (see advanceMotion), so this only advances time. */
+function finalizeClock(state: GameState): GameState {
   const shotClock = state.shotClock - 1
   const beat = state.beat + 1
   if (shotClock <= 0) {
     const def = opponentOf(state.offense)
     const log = pushLog(state.log, `⏱️ Shot-clock violation — ${sideName(def)} ball.`)
     const events: BeatEvent[] = [{ kind: 'shotclock', text: 'Shot-clock violation!' }]
-    return setupPossession({ ...state, players, beat, events, log }, def, SHOT_CLOCK_BEATS, log)
+    return setupPossession({ ...state, players: state.players, beat, events, log }, def, SHOT_CLOCK_BEATS, log)
   }
-  return { ...state, players, shotClock, beat }
+  return { ...state, shotClock, beat }
 }
 
 // ---------------------------------------------------------------------------

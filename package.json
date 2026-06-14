@@ -8,6 +8,7 @@
     "build": "tsc && vite build",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
+    "balance": "esbuild src/games/courtClash/balance.ts --bundle --platform=node --format=esm --outfile=/tmp/cc-balance.mjs && node /tmp/cc-balance.mjs",
     "prepare": "husky"
   },
   "dependencies": {
@@ -18,12 +19,15 @@
     "@types/react": "^18.3.3",
     "@types/react-dom": "^18.3.0",
     "@vitejs/plugin-react": "^4.3.1",
+    "esbuild": "0.21.5",
     "husky": "^9.1.7",
     "typescript": "^5.5.3",
     "vite": "^5.3.4"
   },
   "packageManager": "pnpm@10.0.0",
   "pnpm": {
-    "onlyBuiltDependencies": ["esbuild"]
+    "onlyBuiltDependencies": [
+      "esbuild"
+    ]
   }
 }
