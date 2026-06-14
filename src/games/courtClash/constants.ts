@@ -102,6 +102,10 @@ export const SEPARATION_MIN = 3
  *  separation gap so the block resolves before separation would. */
 export const SCREEN_BODY = 6
 
+/** A driver inside this distance of the rim (and open — i.e. they beat their man)
+ *  pulls the nearest help defender over to protect the rim. */
+export const HELP_PAINT_RADIUS = 24
+
 // ---------------------------------------------------------------------------
 // Contest model. Openness dominates; stat deltas swing it; randomness seasons.
 // All probabilities are clamped to [0.03, 0.97].
