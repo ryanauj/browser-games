@@ -25,6 +25,8 @@ export interface CourtProps {
   shooterRisk: Risk | null
   /** True when a beat is animating (drives the glide timing class). */
   animating: boolean
+  /** Current beat duration (ms) — sets the sprite glide duration to match speed. */
+  beatMs: number
   flash: { text: string; tone: Risk | 'neutral' } | null
   /** Open radial menu (drop point + contextual actions), if any. */
   radial: { at: Vec; items: RadialItem[] } | null
@@ -48,6 +50,7 @@ export function Court(props: CourtProps) {
     targetRisk,
     shooterRisk,
     animating,
+    beatMs,
     flash,
     radial,
     onPlayerTap,
@@ -163,6 +166,7 @@ export function Court(props: CourtProps) {
     <div
       className={`cc-court ${animating ? 'cc-court--anim' : ''}`}
       ref={ref}
+      style={{ ['--cc-beat' as string]: `${beatMs}ms` }}
       onPointerDown={onSurfaceDown}
       onPointerMove={onMove}
       onPointerUp={onUp}
