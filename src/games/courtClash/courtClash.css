@@ -131,10 +131,17 @@
   color: var(--cc-you);
   font-weight: 800;
 }
+.cc__shotclock-cap {
+  font-size: 0.52rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--cc-dim);
+}
 .cc__shotclock {
   font-size: clamp(1.1rem, 4vw, 1.5rem);
   font-weight: 800;
   font-variant-numeric: tabular-nums;
+  line-height: 1.1;
 }
 .cc__shotclock--warn {
   color: var(--cc-bad);
@@ -161,6 +168,39 @@
 }
 .cc__hint--active {
   color: var(--cc-orange);
+}
+
+/* First-run coach banner */
+.cc__coach {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 8px 2px 0;
+  padding: 9px 12px;
+  border-radius: 10px;
+  background: var(--cc-panel-2);
+  background: color-mix(in srgb, var(--cc-orange) 16%, var(--cc-panel));
+  border: 1px solid var(--cc-orange);
+  border-color: color-mix(in srgb, var(--cc-orange) 45%, transparent);
+}
+.cc__coach-text {
+  flex: 1;
+  font-size: 0.85rem;
+  font-weight: 600;
+  line-height: 1.35;
+  color: var(--cc-text);
+}
+.cc__coach-x {
+  flex: none;
+  min-height: 36px;
+  padding: 0 10px;
+  border: 1px solid var(--cc-line);
+  border-radius: 8px;
+  background: var(--cc-panel-2);
+  color: var(--cc-dim);
+  font-size: 0.78rem;
+  font-weight: 700;
+  white-space: nowrap;
 }
 
 /* Court ---------------------------------------------------------------- */
@@ -779,28 +819,61 @@
   text-align: left;
   width: min(94vw, 560px);
 }
-.cc-help__steps {
+.cc-help__lead {
   margin: 0 0 12px;
-  padding-left: 20px;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
   font-size: 0.92rem;
-  line-height: 1.45;
-}
-.cc-help__steps strong {
-  color: var(--cc-orange);
-}
-.cc-help__text {
-  margin: 0 0 6px;
-  font-size: 0.88rem;
+  line-height: 1.4;
   color: var(--cc-dim);
-  line-height: 1.45;
 }
-.cc-help__steps em {
+.cc-help__lead strong {
+  color: var(--cc-text);
+}
+.cc-help em {
   color: var(--cc-text);
   font-style: normal;
   font-weight: 700;
+}
+/* Quick start — the part a newcomer must read */
+.cc-help__quick {
+  margin: 0 0 14px;
+  padding: 10px 12px 10px 0;
+  border-radius: 10px;
+  background: var(--cc-panel-2);
+}
+.cc-help__quick-label {
+  display: block;
+  margin: 0 0 4px 14px;
+  font-size: 0.7rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  font-weight: 800;
+  color: var(--cc-orange);
+}
+.cc-help__quick ol {
+  margin: 0;
+  padding-left: 30px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 0.9rem;
+  line-height: 1.4;
+}
+.cc-help__h {
+  margin: 14px 0 4px;
+  font-size: 0.92rem;
+  color: var(--cc-orange);
+}
+.cc-help__sec {
+  margin: 0;
+  font-size: 0.88rem;
+  line-height: 1.45;
+  color: var(--cc-text);
+}
+.cc-help__text {
+  margin: 14px 0 6px;
+  font-size: 0.86rem;
+  color: var(--cc-dim);
+  line-height: 1.45;
 }
 .cc-help__good {
   color: var(--cc-good);
