@@ -145,8 +145,16 @@ function targetFor(p: Player, players: Player[], ballHandler: Player | undefined
     case 'cut':
     case 'drive':
     case 'help':
-    case 'screen':
       return p.order.to
+    case 'screen': {
+      // A body-targeted screen tracks the defender each beat (so the pick lands
+      // on a moving man, not a patch of floor); otherwise it's a fixed spot.
+      if (p.order.markId) {
+        const mark = byId(players, p.order.markId)
+        if (mark) return { ...mark.pos }
+      }
+      return p.order.to
+    }
     case 'guard': {
       const mark = byId(players, p.order.markId)
       return mark ? stepToward(mark.pos, BASKET, 9) : null
@@ -167,10 +175,13 @@ function targetFor(p: Player, players: Player[], ballHandler: Player | undefined
 function resolveScreens(players: Player[]): void {
   for (const s of players) {
     if (s.order.kind !== 'screen') continue
-    // Don't set the pick until the screener has actually planted at the spot —
+    // The pick sets where the screener is headed: a tracked defender (body) or a
+    // fixed spot. Don't set it until the screener has actually planted there —
     // otherwise it would instantly "screen" whoever happens to be adjacent
     // (often its own defender) and free itself before ever travelling.
-    const planted = dist(s.pos, s.order.to) <= SCREEN_RADIUS
+    const tracked = s.order.markId ? byId(players, s.order.markId) : undefined
+    const targetPos = tracked ? tracked.pos : s.order.to
+    const planted = dist(s.pos, targetPos) <= SCREEN_RADIUS
     if (!planted) continue
     s.screenHeld += 1
     let connected = false
@@ -503,9 +514,20 @@ export function reducer(state: GameState, action: Action): GameState {
     }
     case 'RUN_BEAT':
       return runBeat(state)
-    case 'CALL_SHOT':
+    case 'CALL_SHOT': {
       if (state.phase !== 'play') return state
-      return resolveShot(state, action.playerId)
+      // Let the defense close out one beat before the shot resolves — the same
+      // courtesy the CPU's shots get (which resolve post-movement in runBeat).
+      // Without this, a human could shoot before any defender recovered. The
+      // shooter is planted so they don't drift; we move only (no timer decay) so
+      // a fresh drive's finishing boost still counts.
+      const players = state.players.map((p) => ({ ...p, pos: { ...p.pos } }))
+      const shooter = byId(players, action.playerId)
+      if (!shooter) return state
+      shooter.order = { kind: 'idle' }
+      applyMovement(players, state.ballHandlerId)
+      return resolveShot({ ...state, players }, action.playerId)
+    }
     case 'NEW_GAME':
       return createInitialState(action.seed)
     default:

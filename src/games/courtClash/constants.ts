@@ -90,7 +90,7 @@ export const SCREEN_STAT_WEIGHT = 1.6
 /** A stuck defender moves at this fraction of their step (slowed/screened). */
 export const STUCK_FACTOR = 0.18
 /** A screener is freed (back to idle) after this many beats if it hasn't hit anyone. */
-export const SCREEN_HOLD_MAX = 2
+export const SCREEN_HOLD_MAX = 3
 
 // ---------------------------------------------------------------------------
 // Contest model. Openness dominates; stat deltas swing it; randomness seasons.
@@ -123,13 +123,14 @@ export const BLOCK_STAT_WEIGHT = 0.22
 export const CONTEST_RADIUS = 11
 
 /** Pass steal: a defender near the lane vs the passer's handling/passing. */
-export const PASS_STEAL_BASE = 0.05
+export const PASS_STEAL_BASE = 0.035
 export const PASS_STEAL_STAT_WEIGHT = 0.28
 /** A defender this close to the pass lane can attempt a deflection. */
 export const PASS_LANE_RADIUS = 8
 
-/** On-ball strip while driving into a set defender. */
-export const STRIP_BASE = 0.08
+/** On-ball strip while driving into a set defender. Per drive-beat, so kept low
+ *  — it compounds over a multi-beat drive to the rim. */
+export const STRIP_BASE = 0.05
 export const STRIP_STAT_WEIGHT = 0.24
 
 /** Steal-gamble order: reward and the cost of missing (defender out of play). */
