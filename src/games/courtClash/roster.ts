@@ -55,6 +55,7 @@ function buildSide(side: Side, names: string[]): Player[] {
     stuck: 0,
     screenHeld: 0,
     primed: 0,
+    stripGuard: 0,
   }))
 }
 

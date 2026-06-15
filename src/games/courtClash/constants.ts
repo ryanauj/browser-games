@@ -142,10 +142,13 @@ export const PASS_STEAL_STAT_WEIGHT = 0.28
 /** A defender this close to the pass lane can attempt a deflection. */
 export const PASS_LANE_RADIUS = 8
 
-/** On-ball strip while driving into a set defender. Per drive-beat, so kept low
- *  — it compounds over a multi-beat drive to the rim. */
+/** On-ball strip while driving into a set defender. */
 export const STRIP_BASE = 0.05
 export const STRIP_STAT_WEIGHT = 0.24
+/** After a strip is attempted on a drive, the driver is safe for this many beats
+ *  (they turned the corner) — bounds strips per drive so rim attacks aren't a
+ *  near-certain turnover. */
+export const STRIP_COOLDOWN = 2
 
 /** Steal-gamble order: reward and the cost of missing (defender out of play). */
 export const GAMBLE_STEAL_BASE = 0.18

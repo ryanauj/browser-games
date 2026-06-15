@@ -26,6 +26,7 @@ import {
   SPRINT_FLOOR,
   STAMINA_COST,
   STRIP_BASE,
+  STRIP_COOLDOWN,
   STRIP_STAT_WEIGHT,
   STUCK_FACTOR,
   THREE_PT_RADIUS,
@@ -83,7 +84,14 @@ function setupPossession(
   clock: number,
   log: string[],
 ): GameState {
-  const players = state.players.map((p) => ({ ...p, pos: { ...p.pos }, stuck: 0, screenHeld: 0, primed: 0 }))
+  const players = state.players.map((p) => ({
+    ...p,
+    pos: { ...p.pos },
+    stuck: 0,
+    screenHeld: 0,
+    primed: 0,
+    stripGuard: 0,
+  }))
   const off = players.filter((p) => p.side === offense)
   const def = players.filter((p) => p.side !== offense)
 
@@ -451,6 +459,7 @@ function advanceMotion(players: Player[], ballHandlerId: string | null): void {
   for (const p of players) {
     if (p.stuck > 0) p.stuck -= 1
     if (p.primed > 0) p.primed -= 1 // a finishing boost expires if no shot followed
+    if (p.stripGuard > 0) p.stripGuard -= 1 // corner-turn safety ticks down
   }
   resolveScreens(players)
   applyMovement(players, ballHandlerId)
@@ -527,7 +536,7 @@ function runBeat(state: GameState): GameState {
         return setupPossession({ ...state, players, rngState: r.next, events, log }, gambler.side, SHOT_CLOCK_BEATS, log)
       }
     }
-    if (handler.order.kind === 'drive') {
+    if (handler.order.kind === 'drive' && handler.stripGuard <= 0) {
       const onBall = players.find((d) => d.side !== handler.side && dist(d.pos, handler.pos) <= 6)
       if (onBall) {
         const p = clampP(STRIP_BASE + (statN(onBall.attr.perimeterD) - statN(handler.attr.handle)) * STRIP_STAT_WEIGHT)
@@ -536,6 +545,8 @@ function runBeat(state: GameState): GameState {
           log = pushLog(log, `🧤 ${onBall.name} strips ${handler.name} on the drive!`)
           return setupPossession({ ...state, players, rngState: r.next, events, log }, onBall.side, SHOT_CLOCK_BEATS, log)
         }
+        // Survived the swipe — turned the corner; no re-roll for a couple beats.
+        handler.stripGuard = STRIP_COOLDOWN
       }
     }
   }

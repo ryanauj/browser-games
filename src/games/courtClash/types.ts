@@ -61,6 +61,10 @@ export interface Player {
   screenHeld: number
   /** Beats remaining of a post-drive finishing boost on the next shot. */
   primed: number
+  /** Beats a driver is safe from another on-ball strip — they've turned the
+   *  corner. Stops a multi-beat drive from being re-rolled into a near-certain
+   *  turnover every beat, so attacking the rim is viable. */
+  stripGuard: number
 }
 
 /** Transient outcome of the most recent beat/shot, for the UI to animate. */
