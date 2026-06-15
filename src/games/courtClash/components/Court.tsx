@@ -159,7 +159,7 @@ export function Court(props: CourtProps) {
       let to: Vec | null = null
       if (o.kind === 'move' || o.kind === 'cut' || o.kind === 'drive' || o.kind === 'help') to = o.to
       else if (o.kind === 'screen') to = (o.markId ? players.find((t) => t.id === o.markId)?.pos : null) ?? o.to
-      else if (o.kind === 'pass') to = players.find((t) => t.id === o.toId)?.pos ?? null
+      else if (o.kind === 'pass') to = o.lead ?? players.find((t) => t.id === o.toId)?.pos ?? null
       else if (o.kind === 'guard' || o.kind === 'steal' || o.kind === 'double') {
         const mk = o.kind === 'double' ? ballHandlerId : (o as { markId: string }).markId
         to = players.find((t) => t.id === mk)?.pos ?? null

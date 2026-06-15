@@ -27,6 +27,26 @@
 > is once again **beat-by-beat** (`SPEC.md` §4). The ideas below are kept for
 > reference, but real-time is **not** the current direction.
 
+> **New direction (design 2026-06-15): step-based motion with momentum.** A
+> different take on finer granularity than the reverted real-time runner — keep
+> discrete control, but shrink the atomic unit and add physical commitment.
+> Locked decisions from the design pass:
+>
+> - **Atomic unit → a single step** (not a beat): the smallest tick is one step;
+>   you advance step-by-step. This is a deep change (AI planning, the clock, and
+>   replay all assume beats) and should be scoped carefully.
+> - **Sprint is cancelable, but at a cost:** breaking off a drive/cut isn't free
+>   — you decelerate over a step or two and can overshoot. Commitment matters.
+> - **Direction changes cost speed + overshoot, scaled by a stat** (agility /
+>   handle / balance): quick players cut cleanly; others bleed speed and carry
+>   past the spot on hard redirects.
+> - **Input: start with decide-every-step**, then design multi-step plan queuing
+>   (e.g. drive → stop → shoot) only after play-testing the per-step feel.
+>
+> Sequenced **after** the cutter/lead-pass work. Cutters (catch-in-stride →
+> become handler) are the first taste of momentum and a good probe for whether
+> the fuller step model is worth the rewrite.
+
 Today a possession is a sequence of discrete **beats** you commit one at a time
 (`SPEC.md` §4). This cluster keeps that discrete, deterministic engine but lets
 beats **chain automatically in real time**, with the floor general free to

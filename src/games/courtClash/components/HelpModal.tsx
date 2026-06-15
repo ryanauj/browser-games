@@ -44,6 +44,11 @@ export function HelpModal({ onClose }: Props) {
           shot quality: <span className="cc-help__good">green</span> good, <span className="cc-help__bad">red</span>{' '}
           bad. Inside the arc is 2, beyond it 3.
         </p>
+        <p className="cc-help__sec">
+          <strong>Hit a cutter in stride:</strong> send a teammate on a <em>Cut</em>, then drag the ball handler to the
+          open spot <em>ahead</em> of them and pick <em>🎯 Lead pass</em>. They catch it on the move — a give-and-go to
+          the rim. You choose their next move once they gather it.
+        </p>
 
         <h3 className="cc-help__h">🛡️ Defense — lock down</h3>
         <p className="cc-help__sec">
