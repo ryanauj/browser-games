@@ -3,6 +3,8 @@ import {
   BLOCK_BASE_PERIMETER,
   BLOCK_BASE_RIM,
   BLOCK_STAT_WEIGHT,
+  COLLIDE_MASS_STRENGTH,
+  COLLIDE_MOMENTUM_WEIGHT,
   CONTEST_RADIUS,
   DRIVE_FINISH_BONUS,
   GAMBLE_STEAL_BASE,
@@ -234,27 +236,49 @@ function blockedStep(from: Vec, to: Vec, blockers: Player[], radius: number): Ve
   return bestT >= 1 ? to : { x: from.x + dx * bestT, y: from.y + dy * bestT }
 }
 
-/** Resolve overlaps so no two players end a beat stacked: a couple of relaxation
- *  passes push bodies apart to SEPARATION_MIN. Deterministic (fixed order). The
- *  ball handler is exempt — a drive to the rim draws contact (the defense
- *  contests via shot odds, not by physically blocking the basket). */
-function separateBodies(players: Player[], ballHandlerId: string | null): void {
+/** A body's "mass" for shoving: strength swings it around 1.0. */
+function shoveMass(p: Player): number {
+  return 1 + COLLIDE_MASS_STRENGTH * statN(p.attr.strength)
+}
+
+/** Resolve overlaps so no two players (either team, ball handler included) end a
+ *  beat stacked. Not a wall and not an even split: it's a shove. Each body's
+ *  "oomph" is its mass (strength) plus how hard it drove INTO the contact this
+ *  beat (momentum), and the loser gives way in proportion — a strong, downhill
+ *  driver moves a planted defender off their spot; a backpedaling one gets
+ *  bumped. Deterministic (fixed order + fixed momentum), so replays stay exact. */
+function separateBodies(players: Player[], before: Map<string, Vec>): void {
+  // Momentum = the step each body actually took this beat (captured pre-shove).
+  const mom = new Map(
+    players.map((p) => {
+      const b = before.get(p.id)
+      return [p.id, b ? { x: p.pos.x - b.x, y: p.pos.y - b.y } : { x: 0, y: 0 }] as const
+    }),
+  )
   for (let iter = 0; iter < 2; iter++) {
     for (let i = 0; i < players.length; i++) {
       for (let j = i + 1; j < players.length; j++) {
         const a = players[i]
         const b = players[j]
-        if (a.id === ballHandlerId || b.id === ballHandlerId) continue
         const dx = b.pos.x - a.pos.x
         const dy = b.pos.y - a.pos.y
         let d = Math.hypot(dx, dy)
         if (d >= SEPARATION_MIN) continue
-        // Coincident bodies push apart along a fixed axis so replay stays exact.
+        // Unit axis a→b; coincident bodies use a fixed axis so replay stays exact.
         const ux = d < 1e-6 ? 1 : dx / d
         const uy = d < 1e-6 ? 0 : dy / d
-        const push = (SEPARATION_MIN - d) / 2
-        a.pos = clampToCourt({ x: a.pos.x - ux * push, y: a.pos.y - uy * push })
-        b.pos = clampToCourt({ x: b.pos.x + ux * push, y: b.pos.y + uy * push })
+        // Oomph: mass + momentum driven into the other body (only the component
+        // pushing toward contact counts — backing away doesn't shove).
+        const ma = mom.get(a.id)!
+        const mb = mom.get(b.id)!
+        const wa = shoveMass(a) + COLLIDE_MOMENTUM_WEIGHT * Math.max(0, ma.x * ux + ma.y * uy)
+        const wb = shoveMass(b) + COLLIDE_MOMENTUM_WEIGHT * Math.max(0, mb.x * -ux + mb.y * -uy)
+        const corr = SEPARATION_MIN - d
+        // The heavier/faster body holds ground; the other gives way more.
+        const pushA = corr * (wb / (wa + wb))
+        const pushB = corr * (wa / (wa + wb))
+        a.pos = clampToCourt({ x: a.pos.x - ux * pushA, y: a.pos.y - uy * pushA })
+        b.pos = clampToCourt({ x: b.pos.x + ux * pushB, y: b.pos.y + uy * pushB })
       }
     }
   }
@@ -264,6 +288,9 @@ function applyMovement(players: Player[], ballHandlerId: string | null): void {
   const ballHandler = byId(players, ballHandlerId)
   // Opponents setting a screen are solid bodies you must go around, not through.
   const screeners = players.filter((s) => s.order.kind === 'screen')
+  // Where everyone started this beat — the shove resolver reads each body's
+  // momentum (how far, and which way, it drove) from this.
+  const before = new Map(players.map((p) => [p.id, { ...p.pos }]))
   for (const p of players) {
     // Sprint floor: too gassed to drive/cut — degrade to a jog in place.
     if ((p.order.kind === 'drive' || p.order.kind === 'cut') && p.stamina < SPRINT_FLOOR) {
@@ -287,8 +314,8 @@ function applyMovement(players: Player[], ballHandlerId: string | null): void {
     const cost = STAMINA_COST[p.order.kind]
     p.stamina = Math.max(0, Math.min(100, p.stamina - cost))
   }
-  // Off-ball bodies never end a beat stacked on each other.
-  separateBodies(players, ballHandlerId)
+  // No two bodies end a beat stacked — resolved as a strength/momentum shove.
+  separateBodies(players, before)
 }
 
 // ---------------------------------------------------------------------------

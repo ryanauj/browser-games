@@ -315,8 +315,8 @@
 .cc-player {
   position: absolute;
   transform: translate(-50%, -50%);
-  width: clamp(30px, 8.4vw, 44px);
-  height: clamp(30px, 8.4vw, 44px);
+  width: clamp(26px, 7vw, 37px);
+  height: clamp(26px, 7vw, 37px);
   border-radius: 50%;
   border: 2px solid rgba(0, 0, 0, 0.35);
   display: grid;
