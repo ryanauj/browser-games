@@ -93,10 +93,16 @@ export const STUCK_FACTOR = 0.18
 export const SCREEN_HOLD_MAX = 3
 
 // --- Bodies take up space ---------------------------------------------------
-/** Min distance (floor units) between any two players after a beat resolves —
- *  bodies are nudged apart so nobody ends a beat stacked on top of someone. Kept
- *  small so a defender can still contest tightly without overlapping centers. */
+/** Min distance (floor units) between any two players after a beat resolves — no
+ *  two bodies (either team, ball handler included) end a beat overlapping. Tuned
+ *  so sprites mostly don't overlap while a defender can still contest fairly
+ *  tight. */
 export const SEPARATION_MIN = 3
+/** Collision is a shoving match, not a wall or an even split: when two bodies
+ *  overlap, the one with more "oomph" holds ground and the other gives way.
+ *  Oomph = mass (from strength) + how hard you're moving INTO the contact. */
+export const COLLIDE_MASS_STRENGTH = 0.6 // strength's swing on mass (mass = 1 ± this)
+export const COLLIDE_MOMENTUM_WEIGHT = 0.045 // per floor-unit of step driven into a body
 /** A player setting a screen is a SOLID body: opponents can't move through them,
  *  they must go around (the physical half of a pick). Slightly larger than the
  *  separation gap so the block resolves before separation would. */
