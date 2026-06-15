@@ -526,8 +526,13 @@ function runBeat(state: GameState): GameState {
   // 4. A pass called by the ball handler resolves this beat (one-shot).
   if (handler && handler.order.kind === 'pass') {
     const target = byId(players, handler.order.toId)
+    const lead = handler.order.lead
     handler.order = { kind: 'idle' }
     if (target && target.side === handler.side) {
+      // Lead pass to a cutter: they gather it in stride at the spot you aimed,
+      // clamped to a stride from where their cut took them this beat (movement
+      // already ran). The steal check then judges the lane to that catch point.
+      if (lead) target.pos = clampToCourt(stepToward(target.pos, lead, reachOf(target, true)))
       const { p: stealP, thief } = passStealChance(players, handler, target)
       if (thief && r.roll(stealP)) {
         events.push({ kind: 'steal', by: thief.id, from: handler.pos, to: target.pos, text: `${thief.name} steals it!` })
@@ -535,6 +540,9 @@ function runBeat(state: GameState): GameState {
         return setupPossession({ ...state, players, rngState: r.next, events, log }, thief.side, SHOT_CLOCK_BEATS, log)
       }
       events.push({ kind: 'pass', from: handler.pos, to: target.pos, by: target.id, text: 'Pass' })
+      // Catch and decide: the receiver gathers and goes idle so you (or the CPU)
+      // pick the next action, rather than carrying on a stale cut with the ball.
+      target.order = { kind: 'idle' }
       return finalizeClock({ ...state, players, ballHandlerId: target.id, rngState: r.next, events, log })
     }
   }

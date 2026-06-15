@@ -36,7 +36,7 @@ export type Order =
   | { kind: 'cut'; to: Vec } // hard cut toward a spot (costs stamina)
   | { kind: 'drive'; to: Vec } // ball handler attacks toward a point
   | { kind: 'screen'; to: Vec; markId?: string } // set a pick; with markId, track that defender (a body, not a spot)
-  | { kind: 'pass'; toId: string } // one-shot: ball to a teammate this beat
+  | { kind: 'pass'; toId: string; lead?: Vec } // one-shot pass; lead = aimed catch spot for a cutter
   // defense
   | { kind: 'guard'; markId: string } // man-to-man (default)
   | { kind: 'double'; markId: string } // send a second defender at the ball

@@ -3,7 +3,7 @@ import { BASKET, WIN_TARGET, riskOf, type Risk } from './constants'
 import { passStealChance, shotMakeChance } from './engine'
 import { dist, nearestOpponent, reachOf, stepToward } from './geometry'
 import { useCourtClash } from './useCourtClash'
-import type { Order, Side, Vec } from './types'
+import type { Order, Player, Side, Vec } from './types'
 import { AttrPanel } from './components/AttrPanel'
 import { Court, HOOP_HIT, type RadialItem } from './components/Court'
 import { DebugPanel } from './components/DebugPanel'
@@ -143,6 +143,24 @@ export default function CourtClash() {
     return !!p && dist(p.pos, pt) <= reachOf(p, burst) + 0.01
   }
 
+  // The moving teammate a drag-to-spot is trying to lead, if any: a cutter (on
+  // the move) closest to the aimed spot. Used to offer a lead pass to a cutter.
+  const leadReceiver = (handlerId: string, at: Vec): Player | null => {
+    let best: Player | null = null
+    let bestD = 22 // only lead a cutter reasonably near the aimed catch point
+    for (const m of yourPlayers) {
+      if (m.id === handlerId) continue
+      const moving = m.order.kind === 'move' || m.order.kind === 'cut' || m.order.kind === 'drive'
+      if (!moving) continue
+      const dd = dist(m.pos, at)
+      if (dd < bestD) {
+        bestD = dd
+        best = m
+      }
+    }
+    return best
+  }
+
   // A radial entry that pulls the trigger on a shot (not a queued order).
   const shootItem = (id: string): RadialItem => ({
     label: 'Shoot',
@@ -227,12 +245,15 @@ export default function CourtClash() {
     if (onOffense) {
       const isHandler = id === state.ballHandlerId
       const onHoop = isHandler && dist(at, BASKET) <= HOOP_HIT
+      const cutter = leadReceiver(id, at)
       if (onHoop) {
         // Drag the handler onto the rim to shoot — but always also offer to
         // attack the basket (clamped to reach) so you're never forced into a
-        // shot when you meant to drive there.
+        // shot when you meant to drive there. If a cutter is breaking to the
+        // rim, you can lead them with the pass instead.
         items.push(shootItem(id))
         items.push(mk('Drive', '⚡', { kind: 'drive', to: reachClamp(id, BASKET, true) }))
+        if (cutter) items.push(mk('Lead pass', '🎯', { kind: 'pass', toId: cutter.id, lead: at }))
       } else if (onTeammate && target) {
         if (isHandler) {
           items.push(mk('Pass', '🤝', { kind: 'pass', toId: target.id }))
@@ -255,6 +276,9 @@ export default function CourtClash() {
           items.push(mk('Move', '👟', { kind: 'move', to: spot }))
         }
       } else if (isHandler) {
+        // Aiming at open floor: if a teammate is cutting toward here, lead them
+        // with a pass; otherwise it's the handler's own drive/move.
+        if (cutter) items.push(mk('Lead pass', '🎯', { kind: 'pass', toId: cutter.id, lead: at }))
         items.push(mk('Drive', '⚡', { kind: 'drive', to: burstSpot }))
         items.push(mk('Move', '👟', { kind: 'move', to: spot }))
       } else {
