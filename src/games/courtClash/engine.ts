@@ -236,6 +236,36 @@ function blockedStep(from: Vec, to: Vec, blockers: Player[], radius: number): Ve
   return bestT >= 1 ? to : { x: from.x + dx * bestT, y: from.y + dy * bestT }
 }
 
+/** Prevent tunneling through a *wall* of defenders. A burst drive covers ~2× a
+ *  jog in one beat, enough to leap clear over several stacked bodies — that's the
+ *  "ran straight through two defenders" bug. We don't wall the lane off (a single
+ *  beaten man can still be blown past — that's how a drive gets a rim look, and
+ *  the end-of-beat shove resolves the contact): the mover may slip past the
+ *  NEAREST opposing body on its path, but a SECOND body behind it stops the step
+ *  at that second body's contact point. So beating your man still scores; running
+ *  through the whole set defense no longer does. Bodies already passed (behind the
+ *  mover) and bodies the path clears are ignored. */
+function antiTunnelStep(from: Vec, to: Vec, bodies: Player[], radius: number): Vec {
+  const dx = to.x - from.x
+  const dy = to.y - from.y
+  const len2 = dx * dx + dy * dy
+  if (len2 < 1e-9) return to
+  // Contact parameter t∈(0,1) for every body the straight path would pass through.
+  const hits: number[] = []
+  for (const b of bodies) {
+    const t = ((b.pos.x - from.x) * dx + (b.pos.y - from.y) * dy) / len2
+    if (t <= 0 || t >= 1) continue // behind the mover, or beyond this beat's step
+    const cx = from.x + dx * t - b.pos.x
+    const cy = from.y + dy * t - b.pos.y
+    if (cx * cx + cy * cy > radius * radius) continue // path clears this body
+    hits.push(t)
+  }
+  if (hits.length < 2) return to // open lane, or only one man to beat — let it go
+  hits.sort((a, b) => a - b)
+  const stop = hits[1] // stop at the second defender in the path
+  return { x: from.x + dx * stop, y: from.y + dy * stop }
+}
+
 /** A body's "mass" for shoving: strength swings it around 1.0. */
 function shoveMass(p: Player): number {
   return 1 + COLLIDE_MASS_STRENGTH * statN(p.attr.strength)
@@ -306,7 +336,18 @@ function applyMovement(players: Player[], ballHandlerId: string | null): void {
       const want = stepToward(p.pos, target, step)
       // Can't run through a planted screener — go around (the physical pick).
       const blockers = screeners.filter((s) => s.side !== p.side && s.id !== p.id)
-      p.pos = clampToCourt(blockedStep(p.pos, want, blockers, SCREEN_BODY))
+      let next = blockedStep(p.pos, want, blockers, SCREEN_BODY)
+      // The ball handler can beat one man on a drive, but a single burst can't
+      // leap clear *through* a second defender stacked behind him (the "ran
+      // straight through two defenders" bug). Scoped to the handler: off-ball
+      // cutters and defensive closeouts keep their freedom (the separation model
+      // still resolves where they end up), so only the on-ball drive — the thing
+      // that was teleporting through the set defense — is gated.
+      if (p.id === ballHandlerId) {
+        const bodies = players.filter((o) => o.side !== p.side && o.id !== p.id && o.order.kind !== 'screen')
+        next = antiTunnelStep(p.pos, next, bodies, SEPARATION_MIN)
+      }
+      p.pos = clampToCourt(next)
       // A direct move is one beat: once arrived, drop to idle so the coach
       // re-orders (and the player recovers) rather than drifting on.
       if (ONE_BEAT_MOVES.has(p.order.kind) && dist(p.pos, target) < 1.2) p.order = { kind: 'idle' }
