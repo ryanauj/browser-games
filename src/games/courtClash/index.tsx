@@ -5,7 +5,7 @@ import { dist, nearestOpponent, reachOf, stepToward } from './geometry'
 import { useCourtClash } from './useCourtClash'
 import type { Order, Side, Vec } from './types'
 import { AttrPanel } from './components/AttrPanel'
-import { Court, type RadialItem } from './components/Court'
+import { Court, HOOP_HIT, type RadialItem } from './components/Court'
 import { DebugPanel } from './components/DebugPanel'
 import { GameLog } from './components/GameLog'
 import { GameOverModal } from './components/GameOverModal'
@@ -136,6 +136,25 @@ export default function CourtClash() {
     return p ? stepToward(p.pos, to, reachOf(p, burst)) : to
   }
 
+  // Is a spot reachable in one beat? Used to decide whether a drag is ambiguous
+  // (a shot/pass that could also be a move/drive — show both in the radial).
+  const withinReach = (playerId: string, pt: Vec, burst = false): boolean => {
+    const p = byId(playerId)
+    return !!p && dist(p.pos, pt) <= reachOf(p, burst) + 0.01
+  }
+
+  // A radial entry that pulls the trigger on a shot (not a queued order).
+  const shootItem = (id: string): RadialItem => ({
+    label: 'Shoot',
+    icon: '🏀',
+    run: () => {
+      game.callShot(id)
+      setSelectedId(null)
+      setPending(null)
+      setRadial(null)
+    },
+  })
+
   // A pick "for" a teammate: track the man guarding them (a body, not a spot),
   // so the screener chases the defender wherever they go. Falls back to the
   // teammate's spot if no defender is nearby.
@@ -207,9 +226,22 @@ export default function CourtClash() {
 
     if (onOffense) {
       const isHandler = id === state.ballHandlerId
-      if (onTeammate && target) {
-        if (isHandler) items.push(mk('Pass', '🤝', { kind: 'pass', toId: target.id }))
-        else {
+      const onHoop = isHandler && dist(at, BASKET) <= HOOP_HIT
+      if (onHoop) {
+        // Drag the handler onto the rim to shoot. If the basket is also within a
+        // drive, offer that too so a rim attack isn't hijacked into a shot.
+        items.push(shootItem(id))
+        if (withinReach(id, BASKET, true)) {
+          items.push(mk('Drive', '⚡', { kind: 'drive', to: reachClamp(id, BASKET, true) }))
+        }
+      } else if (onTeammate && target) {
+        if (isHandler) {
+          items.push(mk('Pass', '🤝', { kind: 'pass', toId: target.id }))
+          // If that teammate is within reach, you might mean to relocate, not pass.
+          if (withinReach(id, target.pos)) {
+            items.push(mk('Move', '👟', { kind: 'move', to: reachClamp(id, target.pos) }))
+          }
+        } else {
           // Drop onto a teammate to set a pick FOR them (screen their defender).
           items.push(mk('Screen', '🧱', screenFor(target.id)))
           items.push(mk('Move', '👟', { kind: 'move', to: reachClamp(id, target.pos) }))
@@ -305,7 +337,7 @@ export default function CourtClash() {
     : selected
       ? `${selected.name} (${selected.role}) — pick an action.`
       : onOffense
-        ? 'Your ball. Tap a player (or drag onto a spot/teammate) to set an order, then ▶ Next Beat.'
+        ? 'Your ball. Drag the handler onto the hoop to shoot, or onto a spot/teammate to move/pass — then ▶ Next Beat.'
         : "Defense. Drag one of your players onto the CPU's ball handler to guard, double, or steal — then ▶ Next Beat."
 
   return (

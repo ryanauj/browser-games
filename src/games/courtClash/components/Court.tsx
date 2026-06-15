@@ -39,6 +39,9 @@ export interface CourtProps {
 
 const DRAG_THRESHOLD = 3 // logic units
 const DROP_HIT = 7 // logic-unit radius for "dropped onto this player"
+/** Release within this radius of the rim = a shot (drag-to-hoop). Shared with
+ *  the radial logic in index.tsx so the ghost line and the menu agree. */
+export const HOOP_HIT = 10
 
 export function Court(props: CourtProps) {
   const {
@@ -90,6 +93,11 @@ export function Court(props: CourtProps) {
   // True when your side has the ball — only then are burst orders (drive/cut)
   // available, so the outer reach ring is meaningful.
   const onOffense = players.find((p) => p.id === ballHandlerId)?.side === yourSide
+
+  // The ball handler is being dragged onto the rim — arm the hoop and draw the
+  // drag as a shot line rather than a clamped move.
+  const aimingHoop =
+    !!drag && drag.moved && onOffense && drag.id === ballHandlerId && dist(drag.to, BASKET) <= HOOP_HIT
 
   // Clamp a drag target to one beat's reach for the dragged player. On offense
   // the ghost can stretch to the burst (outer) ring; on defense, the jog ring.
@@ -186,9 +194,24 @@ export function Court(props: CourtProps) {
           className="cc-line-stroke"
           fill="none"
         />
-        {/* rim */}
-        <circle cx={BASKET.x} cy={BASKET.y} r="2.4" className="cc-rim" />
+        {/* layup range */}
         <circle cx={BASKET.x} cy={BASKET.y} r={RIM_RADIUS} className="cc-rim-range" fill="none" />
+        {/* hoop: backboard + rim + net — the scoring target, lit up while aiming */}
+        <g className={`cc-hoop${aimingHoop ? ' cc-hoop--armed' : ''}`}>
+          <circle cx={BASKET.x} cy={BASKET.y} r="5.2" className="cc-hoop__glow" />
+          <rect x={BASKET.x - 7} y="5.4" width="14" height="1.4" rx="0.5" className="cc-hoop__board" />
+          <path
+            d={`M ${BASKET.x - 3.2} ${BASKET.y} L ${BASKET.x - 1.9} ${BASKET.y + 4.6} L ${BASKET.x + 1.9} ${
+              BASKET.y + 4.6
+            } L ${BASKET.x + 3.2} ${BASKET.y} M ${BASKET.x - 1.1} ${BASKET.y} L ${BASKET.x - 0.7} ${
+              BASKET.y + 4.6
+            } M ${BASKET.x + 1.1} ${BASKET.y} L ${BASKET.x + 0.7} ${BASKET.y + 4.6} M ${BASKET.x - 2.5} ${
+              BASKET.y + 2.3
+            } L ${BASKET.x + 2.5} ${BASKET.y + 2.3}`}
+            className="cc-hoop__net"
+          />
+          <circle cx={BASKET.x} cy={BASKET.y} r="3.2" className="cc-hoop__rim" />
+        </g>
       </svg>
 
       {/* Route lines */}
@@ -207,6 +230,13 @@ export function Court(props: CourtProps) {
         {drag &&
           drag.moved &&
           (() => {
+            // Aiming at the rim draws a shot line all the way to the hoop;
+            // otherwise the ghost clamps to one beat's reach (a move/drive).
+            if (aimingHoop) {
+              return (
+                <line x1={drag.from.x} y1={drag.from.y} x2={BASKET.x} y2={BASKET.y} className="cc-route cc-route--shot" />
+              )
+            }
             const c = clampDrag(drag.id, drag.to)
             return <line x1={drag.from.x} y1={drag.from.y} x2={c.x} y2={c.y} className="cc-route cc-route--ghost" />
           })()}
