@@ -228,12 +228,11 @@ export default function CourtClash() {
       const isHandler = id === state.ballHandlerId
       const onHoop = isHandler && dist(at, BASKET) <= HOOP_HIT
       if (onHoop) {
-        // Drag the handler onto the rim to shoot. If the basket is also within a
-        // drive, offer that too so a rim attack isn't hijacked into a shot.
+        // Drag the handler onto the rim to shoot — but always also offer to
+        // attack the basket (clamped to reach) so you're never forced into a
+        // shot when you meant to drive there.
         items.push(shootItem(id))
-        if (withinReach(id, BASKET, true)) {
-          items.push(mk('Drive', '⚡', { kind: 'drive', to: reachClamp(id, BASKET, true) }))
-        }
+        items.push(mk('Drive', '⚡', { kind: 'drive', to: reachClamp(id, BASKET, true) }))
       } else if (onTeammate && target) {
         if (isHandler) {
           items.push(mk('Pass', '🤝', { kind: 'pass', toId: target.id }))
@@ -275,10 +274,9 @@ export default function CourtClash() {
       setRadial(null)
       return
     }
-    if (items.length === 1) {
-      items[0].run()
-      return
-    }
+    // Always surface the menu rather than auto-firing a lone action — so a drag
+    // always lets you choose (e.g. shoot vs. drive to the rim), never commits a
+    // shot behind your back.
     setRadial({ at, items })
   }
 
