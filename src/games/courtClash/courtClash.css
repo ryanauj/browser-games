@@ -234,15 +234,44 @@
   stroke: rgba(255, 248, 235, 0.55);
   stroke-width: 0.5;
 }
-.cc-rim {
-  fill: none;
-  stroke: #ff6a2c;
-  stroke-width: 1;
-}
 .cc-rim-range {
   stroke: rgba(255, 255, 255, 0.18);
   stroke-width: 0.4;
   stroke-dasharray: 1.5 1.5;
+}
+
+/* Hoop: backboard + rim + net — the scoring target. */
+.cc-hoop__glow {
+  fill: var(--cc-orange);
+  opacity: 0.16;
+}
+.cc-hoop__board {
+  fill: rgba(255, 248, 235, 0.92);
+  stroke: rgba(0, 0, 0, 0.3);
+  stroke-width: 0.2;
+}
+.cc-hoop__rim {
+  fill: none;
+  stroke: var(--cc-orange);
+  stroke-width: 1.6;
+}
+.cc-hoop__net {
+  fill: none;
+  stroke: rgba(255, 255, 255, 0.55);
+  stroke-width: 0.32;
+  stroke-linejoin: round;
+}
+/* Lit up while the handler is being dragged onto it (drag-to-shoot). */
+.cc-hoop--armed .cc-hoop__glow {
+  opacity: 0.4;
+  fill: var(--cc-good);
+}
+.cc-hoop--armed .cc-hoop__rim {
+  stroke: var(--cc-good);
+  stroke-width: 2.3;
+}
+.cc-hoop--armed .cc-hoop__net {
+  stroke: rgba(61, 220, 132, 0.8);
 }
 
 .cc-route {
@@ -274,6 +303,12 @@
   stroke: #fff;
   stroke-width: 1.4;
   stroke-dasharray: 2 2;
+}
+.cc-route--shot {
+  stroke: var(--cc-orange);
+  stroke-width: 1.9;
+  stroke-dasharray: 2.5 2;
+  stroke-linecap: round;
 }
 
 /* Player tokens -------------------------------------------------------- */

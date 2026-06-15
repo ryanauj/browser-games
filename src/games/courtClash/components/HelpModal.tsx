@@ -29,8 +29,8 @@ export function HelpModal({ onClose }: Props) {
               until you do.
             </li>
             <li>
-              Tap your ball handler and hit <em>Shoot</em> when the ring around the ball glows{' '}
-              <span className="cc-help__good">green</span>.
+              To shoot, drag your ball handler onto the <em>hoop</em> — or tap them and hit <em>Shoot</em> — when the
+              ring around the ball glows <span className="cc-help__good">green</span>.
             </li>
           </ol>
         </div>
