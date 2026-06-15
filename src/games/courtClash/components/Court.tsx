@@ -2,7 +2,7 @@ import { useRef, useState } from 'react'
 import { BASKET, COURT_H, COURT_W, RIM_RADIUS, SCREEN_RADIUS, THREE_PT_RADIUS, type Risk } from '../constants'
 import { GASSED_THRESHOLD } from '../constants'
 import { signatureAttr } from '../attributes'
-import { dist, reachOf, stepToward } from '../geometry'
+import { contestedStep, dist, reachOf, stepToward } from '../geometry'
 import type { Player, Side, Vec } from '../types'
 
 /** One choice in the post-drag radial menu. The first item is the primary. */
@@ -99,11 +99,20 @@ export function Court(props: CourtProps) {
   const aimingHoop =
     !!drag && drag.moved && onOffense && drag.id === ballHandlerId && dist(drag.to, BASKET) <= HOOP_HIT
 
-  // Clamp a drag target to one beat's reach for the dragged player. On offense
-  // the ghost can stretch to the burst (outer) ring; on defense, the jog ring.
+  // Clamp a drag target to one beat's reach for the dragged player, then bleed
+  // off any ground the defense would take away — so the ghost line ends where the
+  // sim will actually stop you (a drive into traffic comes up short here too, not
+  // just at resolution). On offense the ghost can stretch to the burst (outer)
+  // ring; on defense, the jog ring.
   const clampDrag = (id: string, to: Vec): Vec => {
     const p = players.find((pl) => pl.id === id)
-    return p ? stepToward(p.pos, to, reachOf(p, onOffense)) : to
+    if (!p) return to
+    const reached = stepToward(p.pos, to, reachOf(p, onOffense))
+    // Only the attacking side loses ground to bodies (matches the engine: the
+    // defense isn't slowed by the man it's guarding). Off defense, ghost = reach.
+    if (!onOffense) return reached
+    const bodies = players.filter((o) => o.side !== p.side && o.id !== p.id && o.order.kind !== 'screen')
+    return contestedStep(p.pos, reached, bodies, p.attr.strength)
   }
 
   // Nearest player (any side) under the drop point, if the drag ended on one.

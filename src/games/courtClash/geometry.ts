@@ -2,13 +2,17 @@ import {
   BASE_STEP,
   BASKET,
   BURST_FACTOR,
+  CONTACT_RADIUS,
+  CONTACT_SLOW,
   COURT_H,
   COURT_W,
+  MAX_CONTACT_SLOW,
   MAX_SHOT_RANGE,
   OPEN_DISTANCE,
   RIM_RADIUS,
   SPEED_STEP_BONUS,
   STAMINA_REACH_MIN,
+  STRENGTH_RELIEF,
   THREE_PT_RADIUS,
 } from './constants'
 import type { Player, Side, Vec } from './types'
@@ -43,6 +47,47 @@ export function stepToward(from: Vec, to: Vec, step: number): Vec {
   if (d <= step || d === 0) return { ...to }
   const t = step / d
   return { x: from.x + (to.x - from.x) * t, y: from.y + (to.y - from.y) * t }
+}
+
+/** Contested movement: bodies in your lane *slow* you, they don't teleport you
+ *  through them (the old model only checked end-of-beat overlap, so a burst step
+ *  could leap clean over a stack) and they don't hard-wall you (you can still
+ *  fight downhill past a man). Each opposing body the straight path crosses scales
+ *  the step down by how dead-on the contact is, how soon you hit it, and your
+ *  strength against theirs — and multiple bodies compound, so a true wall throttles
+ *  a drive to a crawl while a lone man only costs a step. Pure + deterministic, so
+ *  the engine and the drag preview agree and replays stay exact. */
+export function contestedStep(
+  from: Vec,
+  want: Vec,
+  bodies: Player[],
+  moverStrength: number,
+): Vec {
+  const dx = want.x - from.x
+  const dy = want.y - from.y
+  const len = Math.hypot(dx, dy)
+  if (len < 1e-9) return want
+  const ux = dx / len
+  const uy = dy / len
+  let slow = 0
+  for (const b of bodies) {
+    // Distance along the path to this body's closest approach.
+    const t = (b.pos.x - from.x) * ux + (b.pos.y - from.y) * uy
+    if (t <= 0) continue // body is behind the mover — not in the way
+    const px = from.x + ux * t - b.pos.x
+    const py = from.y + uy * t - b.pos.y
+    const perp = Math.hypot(px, py)
+    if (perp >= CONTACT_RADIUS) continue // path clears this body
+    const contact = 1 - perp / CONTACT_RADIUS // 1 = dead-on, 0 = a graze
+    const prox = Math.max(0, 1 - t / len) // a man you reach sooner resists more
+    const strAdv = (moverStrength - b.attr.strength) / 49 // ~[-1,1]
+    let res = CONTACT_SLOW * contact * prox * (1 - STRENGTH_RELIEF * strAdv)
+    res = Math.max(0, Math.min(1, res))
+    slow = 1 - (1 - slow) * (1 - res) // compound: a second body stacks on the first
+  }
+  slow = Math.min(slow, MAX_CONTACT_SLOW) // never a full wall — always creep forward
+  if (slow <= 1e-6) return want
+  return stepToward(from, want, len * (1 - slow))
 }
 
 /** Perpendicular distance from point p to the segment a→b. */

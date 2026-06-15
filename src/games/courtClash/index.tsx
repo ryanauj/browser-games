@@ -92,7 +92,7 @@ export default function CourtClash() {
     const tone: Risk | 'neutral' =
       ev.kind === 'shotMake'
         ? 'good'
-        : ev.kind === 'block' || ev.kind === 'steal' || ev.kind === 'turnover' || ev.kind === 'shotclock'
+        : ev.kind === 'block' || ev.kind === 'steal' || ev.kind === 'turnover' || ev.kind === 'shotclock' || ev.kind === 'stall'
           ? 'bad'
           : 'neutral'
     const text = ev.kind === 'shotMake' ? `+${ev.points}!` : ev.text
