@@ -191,7 +191,12 @@ export function aiPlan(state: GameState, side: Side = 'ai'): AiPlan {
     const kickMargin = pressured ? 0.0 : clockLow ? 0.08 : 0.12
     // …but never pass up a point-blank/wide-open look of your own to do it.
     const ownLookGreat = inRange && here.open > 0.62 && here.ev >= 1.05
-    if (!ownLookGreat && bestMate && bestMateOpen > 0.45 && bestMateEV >= hereEff + kickMargin) {
+    // Kick only to a GENUINELY open shooter — a real catch-and-shoot, not a lateral
+    // swing to another covered man. Swinging the covered ball around the arc just
+    // burns clock into a buzzer heave; when no one's truly open the handler attacks
+    // the rim himself. Late, the bar is higher (only a shooter who'll knock it down).
+    const kickOpenBar = clockLow ? 0.62 : 0.54
+    if (!ownLookGreat && bestMate && bestMateOpen > kickOpenBar && bestMateEV >= hereEff + kickMargin) {
       orders.push({ playerId: handler.id, order: { kind: 'pass', toId: bestMate.id } })
       return { orders }
     }
