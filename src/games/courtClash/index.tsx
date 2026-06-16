@@ -149,12 +149,16 @@ export default function CourtClash() {
     const tone: Risk | 'neutral' =
       ev.kind === 'shotMake'
         ? 'good'
-        : ev.kind === 'block' || ev.kind === 'steal' || ev.kind === 'turnover' || ev.kind === 'shotclock' || ev.kind === 'stall'
-          ? 'bad'
-          : 'neutral'
+        : ev.kind === 'stall'
+          ? 'fair' // a slowed drive is a contest, not a turnover — amber, not red
+          : ev.kind === 'block' || ev.kind === 'steal' || ev.kind === 'turnover' || ev.kind === 'shotclock'
+            ? 'bad'
+            : 'neutral'
     const text = ev.kind === 'shotMake' ? `+${ev.points}!` : ev.text
     setFlash({ text, tone })
-    const t = window.setTimeout(() => setFlash(null), 1100)
+    // The stall cue is a quick "you got bottled up" nudge — clear it fast so it
+    // doesn't sit over the next drag; scores/turnovers linger a touch longer.
+    const t = window.setTimeout(() => setFlash(null), ev.kind === 'stall' ? 750 : 1100)
     return () => window.clearTimeout(t)
   }, [state.events])
 

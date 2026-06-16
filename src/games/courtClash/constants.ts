@@ -115,19 +115,25 @@ export const SCREEN_BODY = 6
 // (a bug) or hard-walling (kills the drive), a body in your path SLOWS you, scaled
 // by how dead-on the contact is and your strength vs theirs. Multiple bodies
 // compound, so a real wall throttles a drive to a crawl. See geometry.contestedStep.
-/** How close (floor units) the path must pass a body's center to feel it at all. */
-export const CONTACT_RADIUS = 3.5
+/** How close (floor units) the path must pass a body's center to feel it at all.
+ *  Wider than a sprite so a defender *guarding a lane* — not just dead-center —
+ *  contests it; too tight and any seam over ~2× this slips a drive through clean. */
+export const CONTACT_RADIUS = 5
 /** Step lost on a single dead-on, even-strength body at point-blank (before the
- *  proximity and strength terms ease it). A lone man only costs a step so drives
- *  still get downhill; two stacked bodies compound to throttle a true wall. */
-export const CONTACT_SLOW = 0.4
+ *  strength term eases it). A lone man only costs a step so drives still get
+ *  downhill; two stacked bodies compound to throttle a true wall. */
+export const CONTACT_SLOW = 0.3
 /** How much a strength edge eases the slow (strong downhill driver gives less). */
 export const STRENGTH_RELIEF = 0.7
 /** Hard cap on a single beat's slow — never a full wall, you always creep on. */
 export const MAX_CONTACT_SLOW = 0.75
-/** A ball handler whose contested drive loses at least this many floor units to
- *  bodies is reported as "stalled in traffic" (drives the log line + flash). */
-export const STALL_REPORT_UNITS = 6
+/** A drive is "stalled in traffic" (log line + flash) only when contact stuffs
+ *  it — it kept LESS than this fraction of its intended ground. A drive that's
+ *  merely slowed (still covers most of the gap) shouldn't cry wolf. */
+export const STALL_KEPT_FRACTION = 0.45
+/** …and only count it a drive worth flagging if it meant to travel this far, so
+ *  a short re-position never trips the alarm. */
+export const STALL_MIN_DRIVE = 10
 
 /** A driver inside this distance of the rim (and open — i.e. they beat their man)
  *  pulls the nearest help defender over to protect the rim. */

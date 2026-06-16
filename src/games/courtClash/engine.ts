@@ -27,7 +27,8 @@ import {
   SHOT_CLOCK_RESET_OREB,
   SHOT_STAT_WEIGHT,
   SPRINT_FLOOR,
-  STALL_REPORT_UNITS,
+  STALL_KEPT_FRACTION,
+  STALL_MIN_DRIVE,
   STAMINA_COST,
   STRIP_BASE,
   STRIP_STAT_WEIGHT,
@@ -319,9 +320,13 @@ function applyMovement(players: Player[], ballHandlerId: string | null): { handl
       if (ballHandler && p.side === ballHandler.side) {
         const bodies = players.filter((o) => o.side !== p.side && o.id !== p.id && o.order.kind !== 'screen')
         const contested = clampToCourt(contestedStep(p.pos, next, bodies, p.attr.strength))
-        // Did contact rob this handler's drive of real ground? (for the stall cue)
-        if (p.id === ballHandlerId && p.order.kind === 'drive' && dist(contested, next) >= STALL_REPORT_UNITS) {
-          handlerStalled = true
+        // Flag the stall cue only when contact STUFFS the drive — it meant to
+        // travel a real distance but kept under STALL_KEPT_FRACTION of it. A
+        // drive that's merely slowed (still covers most of the lane) stays quiet.
+        if (p.id === ballHandlerId && p.order.kind === 'drive') {
+          const intended = dist(p.pos, next)
+          const kept = dist(p.pos, contested)
+          if (intended >= STALL_MIN_DRIVE && kept < intended * STALL_KEPT_FRACTION) handlerStalled = true
         }
         next = contested
       }
@@ -612,8 +617,8 @@ function runBeat(state: GameState): GameState {
   // The handler kept the ball but the defense walled the drive — tell the player
   // why their drive came up short (rather than a silent, ignored-input feeling).
   if (handlerStalled && handler) {
-    events.push({ kind: 'stall', by: handler.id, from: handler.pos, text: 'Walled off!' })
-    log = pushLog(log, `🚧 ${handler.name}'s drive stalls in traffic.`)
+    events.push({ kind: 'stall', by: handler.id, from: handler.pos, text: 'Bottled up!' })
+    log = pushLog(log, `🚧 ${handler.name}'s drive is bottled up in traffic — kick it out or attack a gap.`)
   }
 
   return finalizeClock({ ...state, players, rngState: r.next, events, log })

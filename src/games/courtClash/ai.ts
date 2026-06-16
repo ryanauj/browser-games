@@ -84,6 +84,11 @@ export function aiPlan(state: GameState, side: Side = 'ai'): AiPlan {
     const d = distToRim(handler.pos)
     const inRange = d < MAX_SHOT_RANGE * 0.95
     const mustShoot = state.shotClock <= 1
+    // Late-clock urgency: rather than grind a stalling drive into a buzzer heave
+    // from downtown (a near-0% three that craters the shot chart), take the best
+    // look you can actually get to while still in range — but only in the last
+    // beat or two, so it doesn't abandon a developing drive for an early jumper.
+    const clockLow = state.shotClock <= 2
 
     // Off-ball men work to get open / space the floor regardless of the choice.
     for (const p of ai) {
@@ -93,8 +98,10 @@ export function aiPlan(state: GameState, side: Side = 'ai'): AiPlan {
 
     // 1) Take a genuinely good look now (or when the clock forces it). Threes
     //    demand a real catch-and-shoot window; rim/mid looks fire more freely.
-    const needOpen = shotType(handler.pos) === 'three' ? 0.5 : 0.4
-    const goodLook = inRange && here.ev >= 0.92 && here.open > needOpen
+    //    As the clock winds down, lower the bar so a decent in-range look beats a
+    //    desperation heave a beat later.
+    const needOpen = (shotType(handler.pos) === 'three' ? 0.5 : 0.4) - (clockLow ? 0.08 : 0)
+    const goodLook = inRange && here.ev >= (clockLow ? 0.82 : 0.92) && here.open > needOpen
     if (mustShoot || goodLook) {
       orders.push({ playerId: handler.id, order: { kind: 'idle' } })
       return { orders, shoot: handler.id }
@@ -103,7 +110,7 @@ export function aiPlan(state: GameState, side: Side = 'ai'): AiPlan {
     // 2) Swing to a teammate with a clearly better look (the drive-and-kick:
     //    when help rotates to the rim, the man it left is the open three).
     let bestMate: Player | null = null
-    let bestMateEV = here.ev + 0.15
+    let bestMateEV = here.ev + (clockLow ? 0.1 : 0.15) // kick out a touch more readily late
     for (const m of ai) {
       if (m.id === handler.id) continue
       const mEV = shotEV(m, state.players)

@@ -661,6 +661,12 @@
   color: #fff;
   font-size: clamp(1.2rem, 6vw, 2rem);
 }
+/* A slowed drive isn't a turnover — amber + smaller so it reads as "contested",
+ * not the red alarm of a steal/block. */
+.cc-flash--fair {
+  color: var(--cc-fair);
+  font-size: clamp(1.2rem, 6vw, 2rem);
+}
 @keyframes cc-flash {
   0% {
     opacity: 0;
