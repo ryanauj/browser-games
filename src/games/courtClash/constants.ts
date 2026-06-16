@@ -134,6 +134,17 @@ export const STALL_REPORT_UNITS = 6
 export const HELP_PAINT_RADIUS = 24
 
 // ---------------------------------------------------------------------------
+// Lead passes. You aim a pass at a spot; a cutter gathers it in stride. The
+// catch corridor is "anywhere along a mover's route they can still reach this
+// beat"; aim past it (or into empty floor) and the pass sails away — a turnover.
+// ---------------------------------------------------------------------------
+
+/** A led pass is gathered only if it lands within this of where the receiver can
+ *  actually get to (their step this beat + one gather stride). Aimed farther —
+ *  too far ahead, or into empty floor — and it's an errant pass (turnover). */
+export const LEAD_CATCH_RADIUS = 7
+
+// ---------------------------------------------------------------------------
 // Contest model. Openness dominates; stat deltas swing it; randomness seasons.
 // All probabilities are clamped to [0.03, 0.97].
 // ---------------------------------------------------------------------------

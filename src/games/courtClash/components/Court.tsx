@@ -1,8 +1,8 @@
 import { useRef, useState } from 'react'
-import { BASKET, COURT_H, COURT_W, RIM_RADIUS, SCREEN_RADIUS, THREE_PT_RADIUS, type Risk } from '../constants'
+import { BASKET, COURT_H, COURT_W, LEAD_CATCH_RADIUS, RIM_RADIUS, SCREEN_RADIUS, THREE_PT_RADIUS, type Risk } from '../constants'
 import { GASSED_THRESHOLD } from '../constants'
 import { signatureAttr } from '../attributes'
-import { contestedStep, dist, reachOf, stepToward } from '../geometry'
+import { contestedStep, dist, leadCatch, reachOf, stepToward } from '../geometry'
 import type { Player, Side, Vec } from '../types'
 
 /** One choice in the post-drag radial menu. The first item is the primary. */
@@ -10,6 +10,25 @@ export interface RadialItem {
   label: string
   icon: string
   run: () => void
+}
+
+/** One leg of the ball's travel this beat: a straight hop with an optional lob
+ *  arc (peak height in floor units; 0 = a flat line). */
+export interface BallSeg {
+  from: Vec
+  to: Vec
+  arc: number
+}
+
+/** The ball's animated travel for the beat just resolved. `lane` draws the throw
+ *  lane for legibility; `contestId` flags the defender nearest it (the man who
+ *  could pick it). `key` remounts the animation each beat so it replays. */
+export interface BallFlight {
+  key: string
+  tone: 'pass' | 'make' | 'miss' | 'steal' | 'turnover' | 'block'
+  segments: BallSeg[]
+  lane?: { from: Vec; to: Vec }
+  contestId?: string
 }
 
 export interface CourtProps {
@@ -28,6 +47,9 @@ export interface CourtProps {
   /** Current beat duration (ms) — sets the sprite glide duration to match speed. */
   beatMs: number
   flash: { text: string; tone: Risk | 'neutral' } | null
+  /** Ball travel to animate for the beat just resolved (null = ball rests on the
+   *  handler). Only non-null while a beat is gliding. */
+  ballFlight: BallFlight | null
   /** Open radial menu (drop point + contextual actions), if any. */
   radial: { at: Vec; items: RadialItem[] } | null
   onPlayerTap: (id: string) => void
@@ -55,6 +77,7 @@ export function Court(props: CourtProps) {
     animating,
     beatMs,
     flash,
+    ballFlight,
     radial,
     onPlayerTap,
     onCourtTap,
@@ -265,7 +288,92 @@ export function Court(props: CourtProps) {
             </>
           )
         })()}
+        {drag &&
+          drag.moved &&
+          onOffense &&
+          drag.id === ballHandlerId &&
+          !aimingHoop &&
+          (() => {
+            // Lead-pass affordance: highlight each cutter's route as a catch
+            // corridor and pip the aim point green (a teammate can gather it
+            // there) or red (it would sail past everyone — a turnover). Mirrors
+            // bestLeadTarget so what you see matches what fires.
+            const movers = players.filter(
+              (m) =>
+                m.side === yourSide &&
+                m.id !== drag.id &&
+                (m.order.kind === 'move' || m.order.kind === 'cut' || m.order.kind === 'drive'),
+            )
+            let best: Player | null = null
+            let bestMiss = Infinity
+            for (const m of players) {
+              if (m.side !== yourSide || m.id === drag.id) continue
+              const { miss } = leadCatch(m, drag.to)
+              if (miss < bestMiss) {
+                bestMiss = miss
+                best = m
+              }
+            }
+            const ok = !!best && bestMiss <= LEAD_CATCH_RADIUS
+            return (
+              <>
+                {movers.map((m) => {
+                  const o = m.order as { to: Vec }
+                  return (
+                    <line
+                      key={m.id}
+                      x1={m.pos.x}
+                      y1={m.pos.y}
+                      x2={o.to.x}
+                      y2={o.to.y}
+                      className={`cc-lead-lane${best && m.id === best.id ? ' cc-lead-lane--active' : ''}`}
+                    />
+                  )
+                })}
+                <circle cx={drag.to.x} cy={drag.to.y} r={2.8} className={`cc-lead-pip cc-lead-pip--${ok ? 'ok' : 'risk'}`} />
+              </>
+            )
+          })()}
+        {ballFlight?.lane && (
+          <line
+            x1={ballFlight.lane.from.x}
+            y1={ballFlight.lane.from.y}
+            x2={ballFlight.lane.to.x}
+            y2={ballFlight.lane.to.y}
+            className={`cc-pass-lane cc-pass-lane--${ballFlight.tone}`}
+          />
+        )}
       </svg>
+
+      {/* The ball in flight — each leg a keyframed hop (arc baked into a midpoint
+          stop). Legs run back-to-back across the beat, weighted by distance. */}
+      {ballFlight && (
+        <div className="cc-ball-layer" key={ballFlight.key} aria-hidden>
+          {(() => {
+            const lens = ballFlight.segments.map((s) => Math.max(6, dist(s.from, s.to)))
+            const total = lens.reduce((a, b) => a + b, 0)
+            let acc = 0
+            return ballFlight.segments.map((s, i) => {
+              const delayMs = beatMs * (acc / total)
+              const durMs = beatMs * (lens[i] / total)
+              acc += lens[i]
+              const mx = (s.from.x + s.to.x) / 2
+              const my = Math.max(0, (s.from.y + s.to.y) / 2 - s.arc)
+              const style = {
+                ['--x0']: pct(s.from.x, COURT_W),
+                ['--y0']: pct(s.from.y, COURT_H),
+                ['--xm']: pct(mx, COURT_W),
+                ['--ym']: pct(my, COURT_H),
+                ['--x1']: pct(s.to.x, COURT_W),
+                ['--y1']: pct(s.to.y, COURT_H),
+                animationDuration: `${durMs}ms`,
+                animationDelay: `${delayMs}ms`,
+              } as React.CSSProperties
+              return <span key={i} className={`cc-ball cc-ball--${ballFlight.tone}`} style={style} />
+            })
+          })()}
+        </div>
+      )}
 
       {/* Players */}
       {players.map((p) => {
@@ -285,6 +393,9 @@ export function Court(props: CourtProps) {
           : null
         const planted = !!screenTarget && dist(p.pos, screenTarget) <= SCREEN_RADIUS
         const screenCls = screenOrder ? ` cc-player--screening${planted ? ' cc-player--planted' : ''}` : ''
+        // The defender nearest a pass/steal lane in flight — lit up as the man
+        // who could (or did) pick it off.
+        const contestCls = ballFlight?.contestId === p.id ? ' cc-player--contest' : ''
         const sig = signatureAttr(p.attr)
         return (
           <button
@@ -292,7 +403,7 @@ export function Court(props: CourtProps) {
             key={p.id}
             className={`cc-player cc-player--${p.side}${isSel ? ' cc-player--sel' : ''}${
               hasBall ? ' cc-player--ball' : ''
-            }${gassed ? ' cc-player--gassed' : ''}${p.stuck > 0 ? ' cc-player--stuck' : ''}${screenCls}${ring}${targetCls}`}
+            }${gassed ? ' cc-player--gassed' : ''}${p.stuck > 0 ? ' cc-player--stuck' : ''}${screenCls}${ring}${targetCls}${contestCls}`}
             style={{ left: pct(p.pos.x, COURT_W), top: pct(p.pos.y, COURT_H) }}
             onPointerDown={(e) => startDrag(e, p)}
           >
@@ -308,7 +419,7 @@ export function Court(props: CourtProps) {
                 style={{ width: `${p.stamina}%` }}
               />
             </span>
-            {hasBall && <span className="cc-player__dot" aria-hidden />}
+            {hasBall && !ballFlight && <span className="cc-player__dot" aria-hidden />}
             {screenOrder && (
               <span className="cc-player__screen" title={planted ? 'Screen set' : 'Setting screen'} aria-hidden>
                 🧱

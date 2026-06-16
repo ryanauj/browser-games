@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { BASKET, WIN_TARGET, riskOf, type Risk } from './constants'
+import { BASKET, LEAD_CATCH_RADIUS, PASS_LANE_RADIUS, WIN_TARGET, riskOf, type Risk } from './constants'
 import { passStealChance, shotMakeChance } from './engine'
-import { dist, nearestOpponent, reachOf, stepToward } from './geometry'
+import { dist, distToSegment, leadCatch, nearestOpponent, reachOf, stepToward } from './geometry'
 import { useCourtClash } from './useCourtClash'
-import type { Order, Player, Side, Vec } from './types'
+import type { BeatEvent, Order, Player, Side, Vec } from './types'
 import { AttrPanel } from './components/AttrPanel'
-import { Court, HOOP_HIT, type RadialItem } from './components/Court'
+import { Court, HOOP_HIT, type BallFlight, type RadialItem } from './components/Court'
 import { DebugPanel } from './components/DebugPanel'
 import { GameLog } from './components/GameLog'
 import { GameOverModal } from './components/GameOverModal'
@@ -36,6 +36,63 @@ function writeStored(key: string, value: string): void {
   } catch {
     /* storage unavailable — onboarding just repeats */
   }
+}
+
+/** Build the ball's travel for the beat just resolved from its events, so the UI
+ *  can fly the ball along it (pass → shot → rebound, steals, errant throws). The
+ *  engine already stamps each event with from/to coords; this just picks the
+ *  salient flight and, for passes, flags the defender nearest the lane. */
+function deriveBallFlight(events: BeatEvent[], players: Player[], key: string): BallFlight | null {
+  const find = (k: BeatEvent['kind']) => events.find((e) => e.kind === k)
+
+  const make = find('shotMake')
+  if (make?.from) return { key, tone: 'make', segments: [{ from: make.from, to: make.to ?? BASKET, arc: 18 }] }
+
+  const miss = find('shotMiss')
+  if (miss?.from) {
+    const rim = miss.to ?? BASKET
+    const segments = [{ from: miss.from, to: rim, arc: 16 }]
+    const rebSpot = find('rebound')?.to // stamped at grab time (survives possession reset)
+    if (rebSpot) segments.push({ from: rim, to: rebSpot, arc: 6 }) // carom off the rim to the board
+    return { key, tone: 'miss', segments }
+  }
+
+  const block = find('block')
+  if (block?.from) return { key, tone: 'block', segments: [{ from: block.from, to: block.to ?? BASKET, arc: 9 }] }
+
+  const steal = find('steal')
+  if (steal?.from) {
+    const grab = steal.to ?? steal.from // interception point, stamped at steal time
+    return {
+      key,
+      tone: 'steal',
+      segments: [{ from: steal.from, to: grab, arc: 0 }],
+      lane: { from: steal.from, to: grab },
+      contestId: steal.by,
+    }
+  }
+
+  const turn = find('turnover')
+  if (turn?.from && turn.to)
+    return { key, tone: 'turnover', segments: [{ from: turn.from, to: turn.to, arc: 0 }], lane: { from: turn.from, to: turn.to } }
+
+  const pass = find('pass')
+  if (pass?.from && pass.to) {
+    // Flag the defender nearest the pass lane — the man who could jump it.
+    const offSide = players.find((p) => p.id === pass.by)?.side
+    let contestId: string | undefined
+    let bestD = PASS_LANE_RADIUS * 1.6
+    for (const d of players) {
+      if (!offSide || d.side === offSide) continue
+      const laneD = distToSegment(d.pos, pass.from, pass.to)
+      if (laneD < bestD) {
+        bestD = laneD
+        contestId = d.id
+      }
+    }
+    return { key, tone: 'pass', segments: [{ from: pass.from, to: pass.to, arc: 0 }], lane: { from: pass.from, to: pass.to }, contestId }
+  }
+  return null
 }
 
 /** What a queued order is still waiting on. */
@@ -101,6 +158,13 @@ export default function CourtClash() {
     return () => window.clearTimeout(t)
   }, [state.events])
 
+  // The ball's flight for the beat just resolved (pass/shot/rebound/steal), fed
+  // to the court to animate the ball traveling. Only shown while the beat glides.
+  const ballFlight = useMemo(
+    () => deriveBallFlight(state.events, state.players, `${state.possession}-${state.beat}`),
+    [state.events, state.players, state.possession, state.beat],
+  )
+
   // --- Risk glow inputs ----------------------------------------------------
   const shooterRisk: Risk | null = useMemo(() => {
     if (!onOffense || !ballHandler || ballHandler.side !== YOU) return null
@@ -143,22 +207,24 @@ export default function CourtClash() {
     return !!p && dist(p.pos, pt) <= reachOf(p, burst) + 0.01
   }
 
-  // The moving teammate a drag-to-spot is trying to lead, if any: a cutter (on
-  // the move) closest to the aimed spot. Used to offer a lead pass to a cutter.
-  const leadReceiver = (handlerId: string, at: Vec): Player | null => {
+  // The teammate a drag-to-spot leads, and whether they can actually gather it
+  // there this beat. Picks whoever comes closest to the aimed catch point (their
+  // route step + a gather stride — see leadCatch). `catchable` false means the
+  // aim sails past everyone's reach, so the pass would be a turnover: still
+  // offered, just flagged risky. This lets you lead anywhere along a cutter's
+  // lane (not just near their current spot) — or chuck it into space and pay.
+  const bestLeadTarget = (handlerId: string, at: Vec): { mover: Player; catchable: boolean } | null => {
     let best: Player | null = null
-    let bestD = 22 // only lead a cutter reasonably near the aimed catch point
+    let bestMiss = Infinity
     for (const m of yourPlayers) {
       if (m.id === handlerId) continue
-      const moving = m.order.kind === 'move' || m.order.kind === 'cut' || m.order.kind === 'drive'
-      if (!moving) continue
-      const dd = dist(m.pos, at)
-      if (dd < bestD) {
-        bestD = dd
+      const { miss } = leadCatch(m, at)
+      if (miss < bestMiss) {
+        bestMiss = miss
         best = m
       }
     }
-    return best
+    return best ? { mover: best, catchable: bestMiss <= LEAD_CATCH_RADIUS } : null
   }
 
   // A radial entry that pulls the trigger on a shot (not a queued order).
@@ -245,15 +311,16 @@ export default function CourtClash() {
     if (onOffense) {
       const isHandler = id === state.ballHandlerId
       const onHoop = isHandler && dist(at, BASKET) <= HOOP_HIT
-      const cutter = leadReceiver(id, at)
+      const lead = isHandler ? bestLeadTarget(id, at) : null
       if (onHoop) {
         // Drag the handler onto the rim to shoot — but always also offer to
         // attack the basket (clamped to reach) so you're never forced into a
         // shot when you meant to drive there. If a cutter is breaking to the
-        // rim, you can lead them with the pass instead.
+        // rim, you can lead them with the pass instead (only when it's a catch —
+        // no risky throws cluttering the shoot menu).
         items.push(shootItem(id))
         items.push(mk('Drive', '⚡', { kind: 'drive', to: reachClamp(id, BASKET, true) }))
-        if (cutter) items.push(mk('Lead pass', '🎯', { kind: 'pass', toId: cutter.id, lead: at }))
+        if (lead?.catchable) items.push(mk('Lead pass', '🎯', { kind: 'pass', toId: lead.mover.id, lead: at }))
       } else if (onTeammate && target) {
         if (isHandler) {
           items.push(mk('Pass', '🤝', { kind: 'pass', toId: target.id }))
@@ -276,9 +343,17 @@ export default function CourtClash() {
           items.push(mk('Move', '👟', { kind: 'move', to: spot }))
         }
       } else if (isHandler) {
-        // Aiming at open floor: if a teammate is cutting toward here, lead them
-        // with a pass; otherwise it's the handler's own drive/move.
-        if (cutter) items.push(mk('Lead pass', '🎯', { kind: 'pass', toId: cutter.id, lead: at }))
+        // Aiming at open floor: lead a teammate breaking toward here with a pass
+        // — a clean catch if someone can gather it in stride, a flagged "risky"
+        // throw if it sails past everyone (a likely turnover). Either way the
+        // handler's own drive/move stay on the menu.
+        if (lead) {
+          items.push(
+            lead.catchable
+              ? mk('Lead pass', '🎯', { kind: 'pass', toId: lead.mover.id, lead: at })
+              : mk('Risky pass', '🎲', { kind: 'pass', toId: lead.mover.id, lead: at }),
+          )
+        }
         items.push(mk('Drive', '⚡', { kind: 'drive', to: burstSpot }))
         items.push(mk('Move', '👟', { kind: 'move', to: spot }))
       } else {
@@ -423,6 +498,7 @@ export default function CourtClash() {
         animating={animating}
         beatMs={beatMs}
         flash={flash}
+        ballFlight={animating ? ballFlight : null}
         radial={radial}
         onPlayerTap={onPlayerTap}
         onCourtTap={onCourtTap}

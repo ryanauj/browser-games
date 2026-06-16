@@ -389,6 +389,122 @@
   border: 2px solid #1a1206;
   box-shadow: 0 0 8px var(--cc-orange);
 }
+/* Ball in flight ------------------------------------------------------- */
+/* Custom props (--x0/--y0 … --x1/--y1) are % positions; the midpoint stop
+   (--xm/--ym) bakes in the lob arc. Each leg gets its own duration/delay so a
+   miss→rebound reads as shot-up-then-carom. fill-mode none = the ball is hidden
+   before its leg starts and after it ends (so it doesn't linger or double up). */
+.cc-ball-layer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 5;
+}
+.cc-ball {
+  position: absolute;
+  left: var(--x0);
+  top: var(--y0);
+  width: 15px;
+  height: 15px;
+  margin: -7.5px 0 0 -7.5px;
+  border-radius: 50%;
+  opacity: 0;
+  background: radial-gradient(circle at 35% 30%, #ffe0b0, var(--cc-orange) 70%);
+  border: 2px solid #2a1a06;
+  box-shadow: 0 0 10px var(--cc-orange);
+  animation-name: cc-ball-fly;
+  animation-timing-function: ease-out;
+  animation-fill-mode: none;
+}
+.cc-ball--make {
+  box-shadow: 0 0 14px var(--cc-good);
+}
+.cc-ball--miss,
+.cc-ball--block {
+  box-shadow: 0 0 12px var(--cc-fair);
+}
+.cc-ball--steal,
+.cc-ball--turnover {
+  box-shadow: 0 0 13px var(--cc-bad);
+}
+@keyframes cc-ball-fly {
+  0% {
+    left: var(--x0);
+    top: var(--y0);
+    opacity: 1;
+  }
+  50% {
+    left: var(--xm);
+    top: var(--ym);
+    opacity: 1;
+  }
+  100% {
+    left: var(--x1);
+    top: var(--y1);
+    opacity: 1;
+  }
+}
+
+/* Pass/steal/turnover lane drawn while the ball flies, so you read the throw and
+   the man near it. */
+.cc-pass-lane {
+  stroke: var(--cc-orange);
+  stroke-width: 1.1;
+  stroke-dasharray: 2 2.5;
+  opacity: 0.7;
+  animation: cc-lane-fade var(--cc-beat, 1s) ease-out forwards;
+}
+.cc-pass-lane--steal,
+.cc-pass-lane--turnover {
+  stroke: var(--cc-bad);
+}
+@keyframes cc-lane-fade {
+  0% {
+    opacity: 0.75;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
+/* Lead-pass affordance shown while dragging the handler: cutter routes as catch
+   corridors + a pip at the aim (green = catchable, red = would sail away). */
+.cc-lead-lane {
+  stroke: rgba(54, 163, 255, 0.4);
+  stroke-width: 1.2;
+  stroke-dasharray: 1 2;
+}
+.cc-lead-lane--active {
+  stroke: var(--cc-you);
+  stroke-width: 2;
+  stroke-dasharray: none;
+}
+.cc-lead-pip {
+  stroke: #0a1120;
+  stroke-width: 0.6;
+}
+.cc-lead-pip--ok {
+  fill: var(--cc-good);
+}
+.cc-lead-pip--risk {
+  fill: var(--cc-bad);
+}
+
+/* Defender sitting in a live pass lane — pulses to read "this man could pick it". */
+.cc-player--contest {
+  animation: cc-contest-pulse var(--cc-beat, 1s) ease-out;
+  z-index: 4;
+}
+@keyframes cc-contest-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 2px var(--cc-bad);
+  }
+  50% {
+    box-shadow: 0 0 0 4px var(--cc-bad), 0 0 16px rgba(255, 107, 107, 0.7);
+  }
+}
+
 .cc-player__badge {
   position: absolute;
   bottom: -7px;
