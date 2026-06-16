@@ -69,23 +69,36 @@ export function contestedStep(
   if (len < 1e-9) return want
   const ux = dx / len
   const uy = dy / len
-  let slow = 0
+  // Per-body resistance for everyone actually in the lane ahead. `t` is the
+  // distance along the path to a body's closest approach.
+  const lane: { t: number; res: number }[] = []
   for (const b of bodies) {
-    // Distance along the path to this body's closest approach.
     const t = (b.pos.x - from.x) * ux + (b.pos.y - from.y) * uy
-    if (t <= 0) continue // body is behind the mover — not in the way
-    const px = from.x + ux * t - b.pos.x
-    const py = from.y + uy * t - b.pos.y
-    const perp = Math.hypot(px, py)
+    if (t <= 0 || t > len) continue // behind you, or beyond this step's reach
+    const perp = Math.hypot(from.x + ux * t - b.pos.x, from.y + uy * t - b.pos.y)
     if (perp >= CONTACT_RADIUS) continue // path clears this body
     const contact = 1 - perp / CONTACT_RADIUS // 1 = dead-on, 0 = a graze
-    const prox = Math.max(0, 1 - t / len) // a man you reach sooner resists more
-    const strAdv = (moverStrength - b.attr.strength) / 49 // ~[-1,1]
-    let res = CONTACT_SLOW * contact * prox * (1 - STRENGTH_RELIEF * strAdv)
-    res = Math.max(0, Math.min(1, res))
-    slow = 1 - (1 - slow) * (1 - res) // compound: a second body stacks on the first
+    // A strength edge eases the slow — but clamp the gap so a freakish mismatch
+    // can't drive resistance to zero (or negative): a wall is never frictionless.
+    const strAdv = Math.max(-1, Math.min(1, (moverStrength - b.attr.strength) / 49))
+    const res = Math.max(0, Math.min(1, CONTACT_SLOW * contact * (1 - STRENGTH_RELIEF * strAdv)))
+    lane.push({ t, res })
   }
-  slow = Math.min(slow, MAX_CONTACT_SLOW) // never a full wall — always creep forward
+  if (lane.length === 0) return want
+  lane.sort((a, b) => a.t - b.t) // resolve nearest body first
+  // March outward: a body only slows you if you actually REACH it. Each one you
+  // hit compounds the slow and pulls your reach in, so a body now past your
+  // shrunken reach drops out — a far rim protector can't brake a drive you stall
+  // out well short of, yet a man dead in your path (even at the end of the step)
+  // still bites. Replaces the old `1 - t/len` weighting, which let a defender at
+  // your step's endpoint (or a two-beat "leapfrog") slip free.
+  let slow = 0
+  let reach = len
+  for (const { t, res } of lane) {
+    if (t > reach) break
+    slow = Math.min(MAX_CONTACT_SLOW, 1 - (1 - slow) * (1 - res)) // never a full wall
+    reach = len * (1 - slow)
+  }
   if (slow <= 1e-6) return want
   return stepToward(from, want, len * (1 - slow))
 }

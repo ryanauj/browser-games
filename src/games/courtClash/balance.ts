@@ -83,16 +83,30 @@ function selfPlayStep(
 function playGame(seed: number, playerPolicy: 'ai' | 'idle' = 'ai') {
   let s = createInitialState(seed)
   const by: Record<Side, Tally> = { player: emptyTally(), ai: emptyTally() }
+  // Distinct possession indices each side spent on offense — so points can be
+  // normalized per-possession (raw point totals are skewed by possession count,
+  // e.g. an idle side cycles the ball back fast and inflates the opponent's tally).
+  const offPoss: Record<Side, Set<number>> = { player: new Set(), ai: new Set() }
   let beats = 0
   while (s.phase === 'play' && beats < BEAT_CAP) {
     const offense = s.offense
+    offPoss[offense].add(s.possession)
     s = selfPlayStep(s, playerPolicy)
     note(by[offense], s) // attribute this beat's events to whoever had the ball
     beats++
   }
   const minSta = Math.min(...s.players.map((p) => p.stamina))
   const avgSta = s.players.reduce((a, p) => a + p.stamina, 0) / s.players.length
-  return { by, beats, score: s.score, possessions: s.possession, minSta, avgSta, over: s.phase === 'gameover' }
+  return {
+    by,
+    beats,
+    score: s.score,
+    possessions: s.possession,
+    offPoss: { player: offPoss.player.size, ai: offPoss.ai.size },
+    minSta,
+    avgSta,
+    over: s.phase === 'gameover',
+  }
 }
 
 function probeOpen(pos: { x: number; y: number }): number {
@@ -145,6 +159,8 @@ function main() {
   let guardMakes = 0
   let idleShots = 0
   let idleMakes = 0
+  let guardPoss = 0
+  let idlePoss = 0
   for (let i = 0; i < GAMES; i++) {
     const guard = playGame(7000 + i, 'ai')
     const idle = playGame(7000 + i, 'idle')
@@ -154,11 +170,19 @@ function main() {
     guardMakes += guard.by.ai.makes
     idleShots += idle.by.ai.shots
     idleMakes += idle.by.ai.makes
+    guardPoss += guard.offPoss.ai
+    idlePoss += idle.offPoss.ai
   }
+  // Per-possession is the honest measure: total AI pts is inflated when the player
+  // idles (the AI simply gets far more possessions), so normalize by AI's own
+  // offensive trips. The point-total line stays for reference.
+  const guardPP = aiVsGuard / Math.max(1, guardPoss)
+  const idlePP = aiVsIdle / Math.max(1, idlePoss)
   console.log(`\n=== Does player defense matter? (AI offense, same ${GAMES} seeds) ===`)
-  console.log(`  player GUARDS:  AI pts=${aiVsGuard}  AI FG%=${pct(guardMakes, guardShots)}`)
-  console.log(`  player IDLE:    AI pts=${aiVsIdle}  AI FG%=${pct(idleMakes, idleShots)}`)
-  console.log(`  => defense effect: ${f1(((aiVsIdle - aiVsGuard) / Math.max(1, aiVsIdle)) * 100)}% fewer AI pts when guarding`)
+  console.log(`  player GUARDS:  AI pts=${aiVsGuard} over ${guardPoss} poss → ${f1(guardPP)} pts/poss  (FG% ${pct(guardMakes, guardShots)})`)
+  console.log(`  player IDLE:    AI pts=${aiVsIdle} over ${idlePoss} poss → ${f1(idlePP)} pts/poss  (FG% ${pct(idleMakes, idleShots)})`)
+  console.log(`  => defense effect: ${f1(((idlePP - guardPP) / Math.max(0.001, idlePP)) * 100)}% fewer AI pts/possession when guarding`)
+  console.log(`     (raw point-total delta: ${f1(((aiVsIdle - aiVsGuard) / Math.max(1, aiVsIdle)) * 100)}% — inflated by possession count)`)
 }
 
 main()

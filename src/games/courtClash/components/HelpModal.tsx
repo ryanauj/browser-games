@@ -40,8 +40,10 @@ export function HelpModal({ onClose }: Props) {
           Openness is everything: a wide-open role player beats a covered star. Use <em>Pass</em>, <em>Cut</em> and{' '}
           <em>Drive</em>, and set a <em>Screen</em> for a teammate — drag a player onto that teammate (or onto a
           defender to pick that man) and your screener hangs the defender up for a beat (watch for the 💥). A drive
-          gets downhill for a finishing boost, but a defender in your path can strip it. The ring on the ball is your
-          shot quality: <span className="cc-help__good">green</span> good, <span className="cc-help__bad">red</span>{' '}
+          gets downhill for a finishing boost, but defenders clogging your lane <em>slow it down</em> — a wall of
+          bodies bottles it up (you'll see “Bottled up!”), so attack a gap or kick it out, and a defender right on you
+          can still strip it. The ring on the ball is your shot quality:{' '}
+          <span className="cc-help__good">green</span> good, <span className="cc-help__bad">red</span>{' '}
           bad. Inside the arc is 2, beyond it 3.
         </p>
         <p className="cc-help__sec">
