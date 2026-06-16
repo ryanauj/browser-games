@@ -10,6 +10,7 @@ import {
   GAMBLE_STEAL_BASE,
   GAMBLE_STEAL_STAT_WEIGHT,
   GASSED_THRESHOLD,
+  LEAD_CATCH_RADIUS,
   OPENNESS_SHOT_WEIGHT,
   OREB_BASE,
   PASS_LANE_RADIUS,
@@ -473,7 +474,7 @@ function resolveShot(state: GameState, shooterId: string): GameState {
     statN(Math.max(...teammates(players, def).map((t) => t.attr.strength))) * 0.12
   if (r.roll(clampP(orebStrength))) {
     const crasher = teammates(players, off).reduce((a, b) => (distToRim(a.pos) < distToRim(b.pos) ? a : b))
-    events.push({ kind: 'rebound', by: crasher.id, text: `${crasher.name} — offensive board!` })
+    events.push({ kind: 'rebound', by: crasher.id, from: BASKET, to: { ...crasher.pos }, text: `${crasher.name} — offensive board!` })
     log = pushLog(log, `↩️ ${crasher.name} grabs the offensive rebound.`)
     return {
       ...state,
@@ -486,7 +487,7 @@ function resolveShot(state: GameState, shooterId: string): GameState {
     }
   }
   const grabber = teammates(players, def).reduce((a, b) => (distToRim(a.pos) < distToRim(b.pos) ? a : b))
-  events.push({ kind: 'rebound', by: grabber.id, text: `${grabber.name} rebounds.` })
+  events.push({ kind: 'rebound', by: grabber.id, from: BASKET, to: { ...grabber.pos }, text: `${grabber.name} rebounds.` })
   log = pushLog(log, `🔁 ${grabber.name} grabs the board — ${sideName(def)} ball.`)
   return setupPossession({ ...state, players, rngState: r.next, events, log }, def, SHOT_CLOCK_BEATS, log)
 }
@@ -550,12 +551,25 @@ function runBeat(state: GameState): GameState {
     handler.order = { kind: 'idle' }
     if (target && target.side === handler.side) {
       // Lead pass to a cutter: they gather it in stride at the spot you aimed,
-      // clamped to a stride from where their cut took them this beat (movement
-      // already ran). The steal check then judges the lane to that catch point.
-      if (lead) target.pos = clampToCourt(stepToward(target.pos, lead, reachOf(target, true)))
+      // clamped to one gather stride from where their cut took them this beat
+      // (movement already ran). If the ball is aimed well past where the receiver
+      // can reach — too far ahead of the cut, or out into empty floor — it sails
+      // away untouched: an errant pass the defense recovers.
+      if (lead) {
+        const aim = clampToCourt(lead)
+        const catchPoint = clampToCourt(stepToward(target.pos, aim, reachOf(target, true)))
+        if (dist(catchPoint, aim) > LEAD_CATCH_RADIUS) {
+          const def = opponentOf(handler.side)
+          events.push({ kind: 'turnover', from: handler.pos, to: aim, by: handler.id, text: 'Errant pass' })
+          log = pushLog(log, `🟠 ${handler.name} sails it out of reach — ${sideName(def)} ball.`)
+          return setupPossession({ ...state, players, rngState: r.next, events, log }, def, SHOT_CLOCK_BEATS, log)
+        }
+        target.pos = catchPoint
+      }
+      // The steal check then judges the lane to that catch point.
       const { p: stealP, thief } = passStealChance(players, handler, target)
       if (thief && r.roll(stealP)) {
-        events.push({ kind: 'steal', by: thief.id, from: handler.pos, to: target.pos, text: `${thief.name} steals it!` })
+        events.push({ kind: 'steal', by: thief.id, from: handler.pos, to: { ...thief.pos }, text: `${thief.name} steals it!` })
         log = pushLog(log, `🧤 ${thief.name} jumps the lane — steal!`)
         return setupPossession({ ...state, players, rngState: r.next, events, log }, thief.side, SHOT_CLOCK_BEATS, log)
       }
@@ -577,7 +591,7 @@ function runBeat(state: GameState): GameState {
         GAMBLE_STEAL_BASE + (statN(gambler.attr.perimeterD) - statN(handler.attr.handle)) * GAMBLE_STEAL_STAT_WEIGHT,
       )
       if (r.roll(p)) {
-        events.push({ kind: 'steal', by: gambler.id, from: handler.pos, text: `${gambler.name} strips it!` })
+        events.push({ kind: 'steal', by: gambler.id, from: handler.pos, to: { ...gambler.pos }, text: `${gambler.name} strips it!` })
         log = pushLog(log, `🧤 ${gambler.name} gambles and gets it!`)
         return setupPossession({ ...state, players, rngState: r.next, events, log }, gambler.side, SHOT_CLOCK_BEATS, log)
       }
@@ -587,7 +601,7 @@ function runBeat(state: GameState): GameState {
       if (onBall) {
         const p = clampP(STRIP_BASE + (statN(onBall.attr.perimeterD) - statN(handler.attr.handle)) * STRIP_STAT_WEIGHT)
         if (r.roll(p)) {
-          events.push({ kind: 'steal', by: onBall.id, from: handler.pos, text: `${onBall.name} strips the drive!` })
+          events.push({ kind: 'steal', by: onBall.id, from: handler.pos, to: { ...onBall.pos }, text: `${onBall.name} strips the drive!` })
           log = pushLog(log, `🧤 ${onBall.name} strips ${handler.name} on the drive!`)
           return setupPossession({ ...state, players, rngState: r.next, events, log }, onBall.side, SHOT_CLOCK_BEATS, log)
         }

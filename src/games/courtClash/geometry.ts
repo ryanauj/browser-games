@@ -101,6 +101,19 @@ export function distToSegment(p: Vec, a: Vec, b: Vec): number {
   return dist(p, { x: a.x + abx * t, y: a.y + aby * t })
 }
 
+/** Where a moving teammate can gather a led pass aimed at `at` THIS beat: their
+ *  own step along their route, then one burst stride toward the ball. `miss` is
+ *  how far the aim lands beyond that reach (≈0 = caught cleanly in stride; large
+ *  = sailed past them). Mirrors the engine's lead-pass resolution so the UI's
+ *  catch/turnover read matches what actually happens. */
+export function leadCatch(m: Player, at: Vec): { point: Vec; miss: number } {
+  const o = m.order
+  const dest = o.kind === 'move' || o.kind === 'cut' || o.kind === 'drive' ? o.to : m.pos
+  const moved = stepToward(m.pos, dest, reachOf(m, o.kind !== 'move'))
+  const point = stepToward(moved, at, reachOf(m, true))
+  return { point, miss: dist(point, at) }
+}
+
 export function shotType(from: Vec): 'layup' | 'two' | 'three' {
   const d = distToRim(from)
   if (d <= RIM_RADIUS) return 'layup'
