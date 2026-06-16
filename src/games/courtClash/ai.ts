@@ -150,6 +150,17 @@ export function aiPlan(state: GameState, side: Side = 'ai'): AiPlan {
     for (const m of ai) {
       if (m.id === handler.id) continue
       if (distToRim(m.pos) >= MAX_SHOT_RANGE) continue
+      // Don't thread it through traffic: a defender sitting in the passing lane
+      // turns a kick into a live-ball steal. Skip a target whose lane is clogged
+      // (the offense holds it and finds a cleaner outlet instead).
+      let laneClear = true
+      for (const dfn of opp) {
+        if (distToSegment(dfn.pos, handler.pos, m.pos) < 2.2) {
+          laneClear = false
+          break
+        }
+      }
+      if (!laneClear) continue
       const mEV = shotEV(m, state.players)
       if (mEV.ev > bestMateEV) {
         bestMateEV = mEV.ev
@@ -269,47 +280,35 @@ export function aiPlan(state: GameState, side: Side = 'ai'): AiPlan {
       }
     }
 
-    if (rimD < HELP_PAINT_RADIUS && open > 0.45) {
-      // A driver beat his man into the paint. TWO things happen, and the offense
-      // weighs both: (1) the rim protector slides over to wall the basket
-      // (contesting the layup/dump-off), and (2) the nearest PERIMETER defender
-      // digs at the ball — springing his man for a catch-and-shoot kick. The dig
-      // is a stunt, not an abandonment (he sits between his man and the ball), so
-      // he can recover to contest the three. Static man defense does neither, so a
-      // non-rotating defense gives up the clean drive — which is what makes
-      // guarding worth more than standing still.
-      if (rimProtIdx >= 0) {
-        const vx = handler.pos.x - BASKET.x
-        const vy = handler.pos.y - BASKET.y
-        const vlen = Math.hypot(vx, vy) || 1
-        const spot = clampToCourt({
-          x: BASKET.x + (vx / vlen) * (RIM_RADIUS - 2),
-          y: BASKET.y + (vy / vlen) * (RIM_RADIUS - 2),
-        })
-        orders[rimProtIdx] = { playerId: ai[rimProtIdx].id, order: { kind: 'help', to: spot } }
+    // SET/PLANT (drop) coverage. With solid-body collision, a SET defender — one
+    // who barely moves — anchors hard enough to STUFF a drive, while a defender on
+    // the move gets bulled off his spot. So the rim protector doesn't chase the
+    // ball; he PLANTS in front of the rim, in the driving lane, and holds. Held
+    // there he's set every beat (anchored), turning a bull into a stopped drive —
+    // and a stopped drive becomes a kickout (the Stage-1 offense). He only sags
+    // like this off a non-shooter (his man, the dunker big), the same read a real
+    // drop big makes. Because the plant tracks the BALL's lane — not just his
+    // man — it stops drives a flat-footed static defense lets through, which is
+    // what makes active guarding worth more than standing still under collision.
+    const rimMan = rimProtIdx >= 0 ? opp[rimProtIdx] : null
+    const canDrop = rimMan && (rimMan.attr.shooting < 58 || distToRim(rimMan.pos) < HELP_PAINT_RADIUS)
+    if (rimProtIdx >= 0 && canDrop && rimD < MAX_SHOT_RANGE * 0.85) {
+      // A FIXED anchor in front of the rim — deliberately not tracking the ball, so
+      // the protector reaches it once and then holds, staying SET beat after beat.
+      // Set, he anchors hard enough to stuff a bull; if he chased the ball he'd be
+      // on the move every beat and get bulled off the spot (the very thing the
+      // collision punishes). This is the disciplined drop that turns drives into
+      // kickouts without surrendering the dump-off.
+      const plant = clampToCourt({ x: BASKET.x, y: BASKET.y + RIM_RADIUS - 2 })
+      if (dist(ai[rimProtIdx].pos, plant) > 2) {
+        orders[rimProtIdx] = { playerId: ai[rimProtIdx].id, order: { kind: 'help', to: plant } }
+      } else {
+        // Already home — hold (idle = zero motion = maximum anchor).
+        orders[rimProtIdx] = { playerId: ai[rimProtIdx].id, order: { kind: 'idle' } }
       }
-      // Nearest perimeter defender (not on-ball, not the rim anchor) stunts at the
-      // driver, splitting the distance to his man so he can still close back out.
-      // The dig pressures the drive and springs his man for a catch-and-shoot
-      // kick; static man defense never stunts, so it gives the clean drive up.
-      let digIdx = -1
-      let bestD = Infinity
-      for (let i = 0; i < opp.length; i++) {
-        if (i === primaryIdx || i === rimProtIdx) continue
-        const dd = dist(ai[i].pos, handler.pos)
-        if (dd < bestD) {
-          bestD = dd
-          digIdx = i
-        }
-      }
-      if (digIdx >= 0) {
-        const dig = clampToCourt({
-          x: ai[digIdx].pos.x + (handler.pos.x - ai[digIdx].pos.x) * 0.6,
-          y: ai[digIdx].pos.y + (handler.pos.y - ai[digIdx].pos.y) * 0.6,
-        })
-        orders[digIdx] = { playerId: ai[digIdx].id, order: { kind: 'help', to: dig } }
-      }
-    } else if (open > 0.6 && rimD < MAX_SHOT_RANGE * 0.7) {
+    }
+
+    if (open > 0.6 && rimD < MAX_SHOT_RANGE * 0.7) {
       // Open on the perimeter: send a second body at the ball, pulled off the
       // least dangerous man.
       let helperIdx = -1

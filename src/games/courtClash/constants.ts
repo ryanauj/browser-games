@@ -108,6 +108,36 @@ export const COLLIDE_MOMENTUM_WEIGHT = 0.045 // per floor-unit of step driven in
  *  separation gap so the block resolves before separation would. */
 export const SCREEN_BODY = 6
 
+// --- Solid-body drive collision --------------------------------------------
+// A ball handler driving into a defender is a TRUE collision: he either bulls
+// through (shoving the man off his spot and carrying on) or is stopped dead at
+// the body — never a phantom that slips past leaving a planted ghost. The
+// outcome is strength + the momentum he's carrying vs the defender's anchor; a
+// SET defender (one who barely moved this beat) holds far harder. See
+// engine.driveCollision. This REPLACES the old slow-through for the driver
+// (off-ball cutters still merely get slowed by contestedStep).
+/** How close (floor units) the drive path must come to a defender's center to
+ *  count as body contact — roughly two torsos. */
+export const COLLIDE_RADIUS = 4.5
+/** Per floor-unit of the driver's step, how much momentum adds to his shove
+ *  "oomph" in the collision contest (on top of his mass). */
+export const COLLIDE_DRIVE_MOMENTUM = 0.05
+/** A fully SET defender (zero motion this beat) adds this much to his anchor
+ *  mass — enough that a planted man stuffs an even-strength, full-speed drive,
+ *  while a defender on the move gives way. */
+export const SET_ANCHOR_BONUS = 1.1
+/** A defender who moved at least this far this beat counts as fully "on the
+ *  move" (no anchor bonus); below it, the bonus ramps in toward SET_ANCHOR_BONUS. */
+export const SET_MOTION_REF = 9
+/** Most a bulled defender is shoved off his spot in one beat — bounded so a
+ *  collision can't fling a man across the floor; he recovers (re-plans) next beat. */
+export const COLLIDE_MAX_SHOVE = 5
+/** Added on-ball strip chance while the handler's handle is loose from a bull
+ *  (the cost of bulling, beyond the stamina it burns). */
+export const BULL_STRIP_BONUS = 0.03
+/** Extra stamina a bull-through burns (lowering the shoulder is work). */
+export const BULL_STAMINA = 4
+
 // --- Contested movement (anti-tunnel) ---------------------------------------
 // A burst step covers ~2x a jog — enough, under the old end-of-beat-only overlap
 // check, to leap clean through a stack of defenders without ever registering
@@ -180,9 +210,11 @@ export const BLOCK_STAT_WEIGHT = 0.22
 /** A defender must be within this distance to contest/block a shot at all. */
 export const CONTEST_RADIUS = 11
 
-/** Pass steal: a defender near the lane vs the passer's handling/passing. */
-export const PASS_STEAL_BASE = 0.035
-export const PASS_STEAL_STAT_WEIGHT = 0.28
+/** Pass steal: a defender near the lane vs the passer's handling/passing. Tuned
+ *  down for the drive-and-kick era — the offense swings the ball far more, so a
+ *  per-pass rate that was fine at low volume otherwise stacks into a steal spike. */
+export const PASS_STEAL_BASE = 0.022
+export const PASS_STEAL_STAT_WEIGHT = 0.24
 /** A defender this close to the pass lane can attempt a deflection. */
 export const PASS_LANE_RADIUS = 8
 

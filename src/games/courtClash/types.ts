@@ -61,6 +61,9 @@ export interface Player {
   screenHeld: number
   /** Beats remaining of a post-drive finishing boost on the next shot. */
   primed: number
+  /** Beats remaining of a "loose handle" after bulling through a body — the
+   *  driver shoved a man off his spot but exposed the ball (higher strip risk). */
+  bull: number
 }
 
 /** Transient outcome of the most recent beat/shot, for the UI to animate. */
