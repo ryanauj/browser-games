@@ -3,8 +3,13 @@ import {
   BLOCK_BASE_PERIMETER,
   BLOCK_BASE_RIM,
   BLOCK_STAT_WEIGHT,
+  BULL_STAMINA,
+  BULL_STRIP_BONUS,
+  COLLIDE_DRIVE_MOMENTUM,
   COLLIDE_MASS_STRENGTH,
+  COLLIDE_MAX_SHOVE,
   COLLIDE_MOMENTUM_WEIGHT,
+  COLLIDE_RADIUS,
   CONTEST_RADIUS,
   DRIVE_FINISH_BONUS,
   GAMBLE_STEAL_BASE,
@@ -22,6 +27,8 @@ import {
   SCREEN_MAX,
   SCREEN_RADIUS,
   SEPARATION_MIN,
+  SET_ANCHOR_BONUS,
+  SET_MOTION_REF,
   SHOT_BASE,
   SHOT_CLOCK_BEATS,
   SHOT_CLOCK_RESET_OREB,
@@ -89,7 +96,7 @@ function setupPossession(
   clock: number,
   log: string[],
 ): GameState {
-  const players = state.players.map((p) => ({ ...p, pos: { ...p.pos }, stuck: 0, screenHeld: 0, primed: 0 }))
+  const players = state.players.map((p) => ({ ...p, pos: { ...p.pos }, stuck: 0, screenHeld: 0, primed: 0, bull: 0 }))
   const off = players.filter((p) => p.side === offense)
   const def = players.filter((p) => p.side !== offense)
 
@@ -288,6 +295,68 @@ function separateBodies(players: Player[], before: Map<string, Vec>): void {
   }
 }
 
+/** Solid-body drive collision. A ball handler driving into a defender either
+ *  BULLS THROUGH — shoving the man off his spot and carrying on — or is STOPPED
+ *  dead at the body. He never phantoms past leaving a planted ghost (the old
+ *  bug). The contest is the driver's mass + the momentum he's carrying into the
+ *  hit vs the defender's anchor; a SET defender (one who barely moved this beat)
+ *  holds far harder, so a planted man can stuff an even-strength, full-speed
+ *  drive while a defender on the move gives way. Mutates the bulled defender's
+ *  position (bounded by COLLIDE_MAX_SHOVE, recovered when he re-plans next beat).
+ *  `defMove` maps each defender id to how far it intends to move this beat.
+ *  Returns where the driver ends up and whether he bulled (loose handle). */
+function driveCollision(
+  driver: Player,
+  from: Vec,
+  want: Vec,
+  defenders: Player[],
+  defStart: Map<string, Vec>,
+  defMove: Map<string, number>,
+): { pos: Vec; bull: boolean } {
+  const dx = want.x - from.x
+  const dy = want.y - from.y
+  const len = Math.hypot(dx, dy)
+  if (len < 1e-9) return { pos: want, bull: false }
+  const ux = dx / len
+  const uy = dy / len
+  // Earliest body the straight path enters (ray vs a COLLIDE_RADIUS disc).
+  let hit: Player | null = null
+  let hitT = Infinity
+  for (const d of defenders) {
+    const dp = defStart.get(d.id) ?? d.pos
+    const t = (dp.x - from.x) * ux + (dp.y - from.y) * uy
+    if (t <= 0 || t - COLLIDE_RADIUS > len) continue // behind, or out of reach
+    const perp = Math.hypot(from.x + ux * t - dp.x, from.y + uy * t - dp.y)
+    if (perp >= COLLIDE_RADIUS) continue // path clears this body
+    const entry = t - Math.sqrt(Math.max(0, COLLIDE_RADIUS * COLLIDE_RADIUS - perp * perp))
+    if (entry < hitT) {
+      hitT = entry
+      hit = d
+    }
+  }
+  if (!hit) return { pos: want, bull: false }
+
+  // The shove contest at the body.
+  const driverPush = shoveMass(driver) + COLLIDE_DRIVE_MOMENTUM * len
+  const setFactor = Math.max(0, Math.min(1, 1 - (defMove.get(hit.id) ?? 0) / SET_MOTION_REF))
+  const defAnchor = shoveMass(hit) + SET_ANCHOR_BONUS * setFactor
+
+  if (driverPush <= defAnchor) {
+    // STOPPED: pull up just shy of the body — no phantom through.
+    const stop = Math.max(0, hitT - 0.1)
+    return { pos: { x: from.x + ux * stop, y: from.y + uy * stop }, bull: false }
+  }
+
+  // BULL THROUGH: the driver carries to his spot and knocks the man off his.
+  // Shove the defender along the contact normal (the way the drive is going),
+  // scaled by how decisively the drive won, capped so no one gets launched.
+  const margin = Math.min(1, (driverPush - defAnchor) / Math.max(0.5, defAnchor))
+  const shove = COLLIDE_MAX_SHOVE * (0.5 + 0.5 * margin)
+  const dp = defStart.get(hit.id) ?? hit.pos
+  hit.pos = clampToCourt({ x: dp.x + ux * shove, y: dp.y + uy * shove })
+  return { pos: want, bull: true }
+}
+
 function applyMovement(players: Player[], ballHandlerId: string | null): { handlerStalled: boolean } {
   const ballHandler = byId(players, ballHandlerId)
   // Opponents setting a screen are solid bodies you must go around, not through.
@@ -295,6 +364,17 @@ function applyMovement(players: Player[], ballHandlerId: string | null): { handl
   // Where everyone started this beat — the shove resolver reads each body's
   // momentum (how far, and which way, it drove) from this.
   const before = new Map(players.map((p) => [p.id, { ...p.pos }]))
+  // How far each player INTENDS to move this beat, from start-of-beat positions
+  // (order-independent). The drive collision reads it to tell a SET defender
+  // (anchored, barely moving) from one on the move.
+  const intendedMove = new Map<string, number>()
+  for (const p of players) {
+    const burst = p.order.kind === 'drive' || p.order.kind === 'cut'
+    let step = reachOf(p, burst)
+    if (p.stuck > 0) step *= STUCK_FACTOR
+    const target = targetFor(p, players, ballHandler)
+    intendedMove.set(p.id, target ? dist(p.pos, stepToward(p.pos, target, step)) : 0)
+  }
   let handlerStalled = false
   for (const p of players) {
     // Sprint floor: too gassed to drive/cut — degrade to a jog in place.
@@ -317,25 +397,32 @@ function applyMovement(players: Player[], ballHandlerId: string | null): { handl
       // DEFENSE taking your ground, so it applies to whoever is attacking it: every
       // offensive mover (the drive AND off-ball cutters), never the defenders —
       // slowing a defender who lives in contact with his man would gut the closeout.
-      if (ballHandler && p.side === ballHandler.side) {
+      if (p.id === ballHandlerId && p.order.kind === 'drive') {
+        // The DRIVER is a solid body meeting solid bodies: bull through (shove the
+        // man off his spot) or get stopped dead — never slip through. Defenders
+        // are read from their start-of-beat spots so the resolution is order-
+        // independent and replays stay exact.
         const bodies = players.filter((o) => o.side !== p.side && o.id !== p.id && o.order.kind !== 'screen')
-        const contested = clampToCourt(contestedStep(p.pos, next, bodies, p.attr.strength))
-        // Flag the stall cue only when contact STUFFS the drive — it meant to
-        // travel a real distance but kept under STALL_KEPT_FRACTION of it. A
-        // drive that's merely slowed (still covers most of the lane) stays quiet.
-        if (p.id === ballHandlerId && p.order.kind === 'drive') {
-          const intended = dist(p.pos, next)
-          const kept = dist(p.pos, contested)
-          if (intended >= STALL_MIN_DRIVE && kept < intended * STALL_KEPT_FRACTION) handlerStalled = true
-        }
-        next = contested
+        const { pos, bull } = driveCollision(p, p.pos, next, bodies, before, intendedMove)
+        const settled = clampToCourt(pos)
+        // Stall cue: contact STUFFED the drive (kept under STALL_KEPT_FRACTION of
+        // its ground) — but a clean bull-through that covered its lane stays quiet.
+        const intended = dist(p.pos, next)
+        const kept = dist(p.pos, settled)
+        if (!bull && intended >= STALL_MIN_DRIVE && kept < intended * STALL_KEPT_FRACTION) handlerStalled = true
+        if (bull) p.bull = 1 // loose handle (strip risk) + extra legs, charged below
+        next = settled
+      } else if (ballHandler && p.side === ballHandler.side) {
+        // Off-ball offensive movers (cutters, relocations) are merely SLOWED by
+        // bodies in their lane — they don't bull, and they don't tunnel through.
+        next = clampToCourt(contestedStep(p.pos, next, players.filter((o) => o.side !== p.side && o.id !== p.id && o.order.kind !== 'screen'), p.attr.strength))
       }
       p.pos = next
       // A direct move is one beat: once arrived, drop to idle so the coach
       // re-orders (and the player recovers) rather than drifting on.
       if (ONE_BEAT_MOVES.has(p.order.kind) && dist(p.pos, target) < 1.2) p.order = { kind: 'idle' }
     }
-    const cost = STAMINA_COST[p.order.kind]
+    const cost = STAMINA_COST[p.order.kind] + (p.bull > 0 ? BULL_STAMINA : 0)
     p.stamina = Math.max(0, Math.min(100, p.stamina - cost))
   }
   // No two bodies end a beat stacked — resolved as a strength/momentum shove.
@@ -361,7 +448,7 @@ export function passStealChance(
     const proximity = 1 - laneD / PASS_LANE_RADIUS
     const p = clampP(
       PASS_STEAL_BASE +
-        proximity * 0.18 +
+        proximity * 0.12 +
         (statN(d.attr.perimeterD) - statN(passer.attr.passing)) * PASS_STEAL_STAT_WEIGHT,
     )
     if (p > best) {
@@ -504,6 +591,7 @@ function advanceMotion(players: Player[], ballHandlerId: string | null): { handl
   for (const p of players) {
     if (p.stuck > 0) p.stuck -= 1
     if (p.primed > 0) p.primed -= 1 // a finishing boost expires if no shot followed
+    p.bull = 0 // loose handle is recomputed each beat by the collision
   }
   resolveScreens(players)
   return applyMovement(players, ballHandlerId)
@@ -604,7 +692,11 @@ function runBeat(state: GameState): GameState {
     if (handler.order.kind === 'drive') {
       const onBall = players.find((d) => d.side !== handler.side && dist(d.pos, handler.pos) <= 6)
       if (onBall) {
-        const p = clampP(STRIP_BASE + (statN(onBall.attr.perimeterD) - statN(handler.attr.handle)) * STRIP_STAT_WEIGHT)
+        const p = clampP(
+          STRIP_BASE +
+            (statN(onBall.attr.perimeterD) - statN(handler.attr.handle)) * STRIP_STAT_WEIGHT +
+            (handler.bull > 0 ? BULL_STRIP_BONUS : 0), // loose handle from bulling a body
+        )
         if (r.roll(p)) {
           events.push({ kind: 'steal', by: onBall.id, from: handler.pos, to: { ...onBall.pos }, text: `${onBall.name} strips the drive!` })
           log = pushLog(log, `🧤 ${onBall.name} strips ${handler.name} on the drive!`)
