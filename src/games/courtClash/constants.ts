@@ -108,6 +108,27 @@ export const COLLIDE_MOMENTUM_WEIGHT = 0.045 // per floor-unit of step driven in
  *  separation gap so the block resolves before separation would. */
 export const SCREEN_BODY = 6
 
+// --- Contested movement (anti-tunnel) ---------------------------------------
+// A burst step covers ~2x a jog — enough, under the old end-of-beat-only overlap
+// check, to leap clean through a stack of defenders without ever registering
+// contact ("ran straight through two defenders"). Instead of teleporting through
+// (a bug) or hard-walling (kills the drive), a body in your path SLOWS you, scaled
+// by how dead-on the contact is and your strength vs theirs. Multiple bodies
+// compound, so a real wall throttles a drive to a crawl. See geometry.contestedStep.
+/** How close (floor units) the path must pass a body's center to feel it at all. */
+export const CONTACT_RADIUS = 3.5
+/** Step lost on a single dead-on, even-strength body at point-blank (before the
+ *  proximity and strength terms ease it). A lone man only costs a step so drives
+ *  still get downhill; two stacked bodies compound to throttle a true wall. */
+export const CONTACT_SLOW = 0.4
+/** How much a strength edge eases the slow (strong downhill driver gives less). */
+export const STRENGTH_RELIEF = 0.7
+/** Hard cap on a single beat's slow — never a full wall, you always creep on. */
+export const MAX_CONTACT_SLOW = 0.75
+/** A ball handler whose contested drive loses at least this many floor units to
+ *  bodies is reported as "stalled in traffic" (drives the log line + flash). */
+export const STALL_REPORT_UNITS = 6
+
 /** A driver inside this distance of the rim (and open — i.e. they beat their man)
  *  pulls the nearest help defender over to protect the rim. */
 export const HELP_PAINT_RADIUS = 24

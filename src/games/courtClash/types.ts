@@ -74,6 +74,7 @@ export interface BeatEvent {
     | 'rebound'
     | 'turnover'
     | 'shotclock'
+    | 'stall'
   from?: Vec
   to?: Vec
   by?: string // player id
