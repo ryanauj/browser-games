@@ -165,6 +165,22 @@ can be swapped/combined in a future variation.
   to a sprint*; everything else is reactive jogging. This **revises Q3**: routes
   are the sprint-commitment tool, not the baseline interaction.
 
+### Q9 — How does a defender stay with a committed (faster-than-jog) sprinter?
+**[CHOSEN: anticipate + cut off the spot, AND positional/contact leverage — combined]**
+- **Cut off the spot, don't chase** — can't out-run a sprint from behind; commit
+  a sprint to a spot AHEAD to beat him to the lane, forcing a stop/bail. Rewards
+  reading the line over foot speed; trailing is a lost cause by design.
+- **Positional gap = leverage** — a goal-side defender doesn't match speed; the
+  sprinter runs INTO him → the bull/stop contact contest, which favors the set,
+  well-positioned body.
+- *(both chosen, they reinforce)* Defense = positioning + anticipation, never a
+  stern chase. You read the committed line, beat him to the spot / hold the right
+  side, and let contact resolve it. Trailing a sprint can't recover. Makes the
+  **rim protector** (set, goal-side, holding the spot) the purest expression of
+  this — i.e., the existing drop/plant model, now with a first-principles reason.
+  Open sub-thread: exact contact resolution when a sprinter meets a set defender
+  who cut off the spot (reuse `driveCollision` fed by sprint momentum).
+
 ## Open decisions (not yet made)
 
 - **Micro-step granularity** — how many sub-steps per beat (2 / 4 / 8…)? More =
