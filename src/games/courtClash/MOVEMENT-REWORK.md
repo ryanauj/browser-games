@@ -26,17 +26,36 @@ onto the same axis.** Sub-stepping splits them: momentum comes from *committing*
 to a line; staying attached comes from *reacting* step-by-step. The cost that
 separates the two is what we're tuning.
 
-## Core architecture (proposed)
+## Core architecture (proposed) — SYNTHESIZED MODEL
 
-Resolve each beat as **several micro-steps** instead of one ~25-unit jump. Per
-micro-step: advance everyone a fraction toward their target, resolve
-collisions/separation, and **re-aim tracking movers (guard/double/steal) at the
-updated positions**. This dissolves both bugs (defenders track continuously;
-nothing tunnels). Players **chain** micro-steps into planned sprints that bank
-**momentum**; committing ahead trades off against reacting.
+Movement is **pure step-by-step** (micro-steps). Each step you may steer any
+player. **Speed is gated behind commitment:**
+
+- **Jog (default).** Steer step-by-step with no committed plan → flat **jog**
+  speed, fully reactive, cheap to change heading each step (slow = nimble).
+- **Sprint (committed).** Lay a **multi-step plan ahead** (a route). While
+  following it you **accelerate per step** along the committed line — the
+  acceleration ramp (Q4), how fast it builds set by an accel/agility attribute.
+  Speed above a jog — and the **momentum that powers a bull-through** — exists
+  *only* because you committed ahead.
+- **Bail vs continue.** Deviate from a committed sprint and pay the **angle×speed
+  redirect penalty** (Q5) — costly precisely because you're moving fast; or stay
+  on the line and keep building speed.
+
+Net dial, per player, every moment: **fast + heavy + telegraphed** (committed
+sprint) vs **slow + nimble + reactive** (jog). Offense and defense both choose.
+Each step also resolves collisions/separation continuously, so the guard-lag and
+phantom-through bugs both dissolve (no full-beat jump to lag behind or tunnel
+through).
+
+Defensive consequence (to design out): a jogging defender stays with a jogging
+handler, but a *committed sprinting* handler outruns a jogging defender — so to
+keep up the defender must ALSO commit a sprint route (becoming telegraphed
+himself), or anticipate and cut off the line. Staying attached is a skill +
+commitment choice, never automatic.
 
 Hard constraint (unchanged): the reducer stays **pure + deterministic** — routes
-are just orders; sub-steps must replay exactly.
+and per-step steers are just orders; sub-steps must replay exactly.
 
 ---
 
@@ -93,16 +112,64 @@ can be swapped/combined in a future variation.
 - Flat speed, momentum = bull only — smallest change; momentum affects only
   contact, not travel speed. (Fallback if continuous accel destabilizes pace.)
 
+### Q5 — How steep is the redirect cost — what does it scale with?
+**[CHOSEN: both — angle × speed]**
+- Scales with turn angle — gentle curve ~free, sharp cut sheds lots; physical,
+  pairs with accel ramp.
+- Scales with current speed — faster = harder to turn (freight train); standing
+  players redirect freely.
+- **Both (angle × speed)** *(chosen)* — cost = how hard you turn × how fast
+  you're going. Slow nudge free; fast hard cut brutal. A full-speed driver is
+  truly committed/telegraphed; change-of-direction taxes the trailing reactor
+  most (a crossover at speed forces the chaser to pay to match). Two knobs
+  (angle coeff, speed coeff) → richest but easiest to make swingy; tune carefully.
+- Flat per redirect — simplest; no nuance between a nudge and a reverse pivot.
+
 ---
+
+### Q6 — What does "reacting" mean for a defender? *(reframed during discussion)*
+**[DIRECTION: defense is active anticipation by the controller, not automatic glue]**
+- The earlier framing (auto-mirror with a stickiness cap: stat-gated / sub-step
+  lag / turn-rate cap / perfect mirror) is **set aside**. Instead: there is no
+  automatic "stay glued to your man." The controller (human or AI) *reads* which
+  way an offensive player is committed and **steers the defender to cut him off**,
+  re-correcting as the play develops. The redirect cost (Q5, angle×speed) applies
+  to the defender's path too, so guessing wrong (over-committing the wrong way)
+  costs speed/stamina to recover. Offense commits a line; defense reads & counters
+  — symmetric. Open sub-question: does a convenience auto-`guard` still exist as a
+  default you can override? (see cadence decision Q7.)
+
+### Q7 — Steering cadence / does auto-follow remain?
+**[CHOSEN: per micro-step — you can re-aim at each sub-step]**
+- Per beat, manual, no auto-glue — symmetric, ~5 inputs/side per beat.
+- Per beat, auto-guard + override — least busywork; anticipation opt-in.
+- **Per micro-step** *(chosen)* — finest anticipation/counter-moves; you can
+  re-aim mid-beat at each sub-step. **Tension to resolve:** this pulls against
+  Q3 (commit a multi-beat route ahead) and risks heavy input (5 players ×
+  several sub-steps). Likely reconciliation: routes are the committed *default
+  / auto-pilot* (momentum builds along them), and the per-micro-step pause is an
+  *optional interrupt* to re-steer (paying the Q5 redirect cost) — you intervene
+  to anticipate/counter, not every step. See Q8.
+
+### Q8 — How do multi-beat routes and per-step steering coexist?
+**[CHOSEN: pure step-by-step; routes are the SPRINT mechanism, not the default]**
+- Route = autopilot + optional interrupt — set routes, autopilot executes,
+  intervene optionally. (Superseded.)
+- Mandatory step-by-step confirm — too much input.
+- **Pure step-by-step, commit-to-sprint** *(chosen, refined)* — execution is
+  always step-by-step. You move at a flat **jog** unless you **plan ahead a
+  multi-step route**, which is how you *sprint*: accelerate along the committed
+  line, picking up speed per step. You can **bail** (redirect penalty) or
+  **continue** (keep building speed). Reconciles Q3 (routes) + Q7 (per-step):
+  routes aren't an autopilot you set and forget — they're the *act of committing
+  to a sprint*; everything else is reactive jogging. This **revises Q3**: routes
+  are the sprint-commitment tool, not the baseline interaction.
 
 ## Open decisions (not yet made)
 
 - **Micro-step granularity** — how many sub-steps per beat (2 / 4 / 8…)? More =
   smoother tracking + truer collisions, more compute. Likely engine-internal;
   UI may still animate beat→beat or interpolate sub-steps.
-- **Redirect-cost scaling** — flat, or proportional to turn angle (gentle curve
-  cheap, hard cut expensive) and/or current speed? Angle-proportional pairs
-  naturally with the accel ramp.
 - **Momentum → bull coupling** — does `driveCollision` read current speed
   directly as the momentum term (replacing `COLLIDE_DRIVE_MOMENTUM × stepLen`)?
 - **Acceleration attribute** — new attr vs derive from existing `speed`/a new
