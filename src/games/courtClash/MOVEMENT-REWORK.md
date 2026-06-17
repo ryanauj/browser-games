@@ -181,11 +181,31 @@ can be swapped/combined in a future variation.
   Open sub-thread: exact contact resolution when a sprinter meets a set defender
   who cut off the spot (reuse `driveCollision` fed by sprint momentum).
 
-## Open decisions (not yet made)
+### Q10 — Step granularity / does the "beat" survive?
+**[CHOSEN: fully step-based — no beat]**
+- Beat = ~3-4 steps (light) — keep beat as clock/cadence, sub-resolve; lowest
+  disruption.
+- Beat = ~6-8 steps (fine) — beat still groups the clock; richer cat-and-mouse.
+- **Fully step-based (no beat)** *(chosen)* — drop the beat entirely; the **step**
+  is the atomic unit and the **shot clock counts steps**. Most faithful to
+  step-by-step. Biggest restructure: clock, pace targets, AI planner, the
+  `balance.ts` harness, and the UI all move to steps. Forces decisions on step
+  size, steps-per-possession, default-between-inputs, and (critically) the
+  time-advance / pacing model (Q11).
 
-- **Micro-step granularity** — how many sub-steps per beat (2 / 4 / 8…)? More =
-  smoother tracking + truer collisions, more compute. Likely engine-internal;
-  UI may still animate beat→beat or interpolate sub-steps.
+### Q11 — Time-advance / input model (fully step-based)?
+**[CHOSEN: turn-based, tap per step]**
+- **Turn-based, tap per step** *(chosen)* — each step: review, optionally
+  re-steer, tap to advance one step. Keeps the deliberate/chess identity at fine
+  resolution. Cost: a possession is many taps (~40-60), so default-between-taps
+  behavior (Q12) is critical, and the UI must make "advance with current orders"
+  one tap. Players continue their orders between taps.
+- Auto-advance + pause-on-demand — fewer taps, live flow; set aside.
+- Real-time continuous — genre shift to action game; rejected.
+- Commit-then-watch (event-driven stops) — coarser human cadence; set aside (a
+  possible later convenience layer over the tap-per-step core).
+
+## Open decisions (not yet made)
 - **Momentum → bull coupling** — does `driveCollision` read current speed
   directly as the momentum term (replacing `COLLIDE_DRIVE_MOMENTUM × stepLen`)?
 - **Acceleration attribute** — new attr vs derive from existing `speed`/a new
