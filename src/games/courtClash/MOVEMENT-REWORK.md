@@ -205,6 +205,22 @@ can be swapped/combined in a future variation.
 - Commit-then-watch (event-driven stops) — coarser human cadence; set aside (a
   possible later convenience layer over the tap-per-step core).
 
+### Q12 — Default behavior on a step where a player gets no new input?
+**[CHOSEN: continue to target, then hold]**
+- Continue current heading — keep a direction forever; set aside (chosen instead
+  the target model, see below).
+- **Continue to target, then hold** *(chosen)* — a player moves toward his last
+  set TARGET each step and stops on arrival. Rationale: it makes sprint-vs-jog
+  natural — *commitment = how far ahead you point the target*. A short/near
+  target (re-set often) = reactive **jog**; a far committed target left untouched
+  = **sprint** that accelerates over the committed distance. Arrival = a natural
+  decel/stop. "Bail" = re-target before arrival (redirect cost + accel reset);
+  "continue" = leave the far target and keep building speed toward it.
+- Hold unless ordered — too much input.
+- *Implementation thread (open, Q13):* exactly how acceleration/sprint is derived
+  from the target — implicit (committed uninterrupted distance) vs explicit mode
+  vs distance threshold.
+
 ## Open decisions (not yet made)
 - **Momentum → bull coupling** — does `driveCollision` read current speed
   directly as the momentum term (replacing `COLLIDE_DRIVE_MOMENTUM × stepLen`)?
