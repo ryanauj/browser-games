@@ -221,6 +221,33 @@ can be swapped/combined in a future variation.
   from the target — implicit (committed uninterrupted distance) vs explicit mode
   vs distance threshold.
 
+### Q13 — How is sprint vs jog determined (target-then-hold)?
+**[CHOSEN: explicit jog/sprint toggle on the order]**
+- Implicit by committed distance — no toggle; uninterrupted travel accelerates;
+  set aside.
+- **Explicit jog/sprint toggle** *(chosen)* — every movement order carries a
+  `mode: 'jog' | 'sprint'` + target. JOG = flat jog speed, cheap to re-aim, fully
+  reactive, no momentum. SPRINT = accelerates toward the target (Q4 ramp),
+  redirect penalty to change (Q5 angle×speed), and is **telegraphed** (opponent
+  sees the committed sprint line → the anticipation/read game). Schema: extend the
+  move/drive order with `mode`, accumulate momentum only while sprinting toward an
+  unchanged target; bull power = current sprint speed.
+- Distance threshold — coarse; set aside.
+
+---
+
+## Model snapshot (after Q1–Q13)
+
+Pure **step-based**, **tap-per-step**, turn-based. Each order = **target + jog|
+sprint**. **Jog**: flat, cheap to re-aim, reactive, no momentum. **Sprint**:
+commit a target, **accelerate** along the line (ramp speed set by an accel/agility
+attr), **telegraphed**, and pay an **angle×speed** penalty to bail. Default
+between taps: **move to target, then hold**. Contact uses the existing
+**bull-vs-stop** contest fed by current sprint momentum; a SET, goal-side
+defender anchors. **Defense = anticipate the committed line, beat him to the spot
+/ hold goal-side**, never chase a sprint from behind. Continuous per-step
+resolution kills the guard-lag and phantom-through bugs.
+
 ## Open decisions (not yet made)
 - **Momentum → bull coupling** — does `driveCollision` read current speed
   directly as the momentum term (replacing `COLLIDE_DRIVE_MOMENTUM × stepLen`)?
