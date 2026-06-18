@@ -259,6 +259,21 @@ resolution kills the guard-lag and phantom-through bugs.
   possession). Sprint orders draw the committed line (telegraph, Q15).
 - Sticky per-player stance — fewest decisions but easy to mismatch; set aside.
 
+### Q15 — How much intent is visible (telegraph)?
+**[CHOSEN: own orders only — infer the opponent from on-floor motion]**
+- Full: sprint lines shown to both — set aside.
+- Partial: direction only — set aside.
+- **Own orders only** *(chosen)* — you see only your own targets/modes; you read
+  the opponent purely from observable motion (a sprinter visibly accelerates /
+  moves faster / leaves a trail). No explicit opponent lines. Highest bluff
+  potential; reading is pure skill.
+- **Revises Q13:** a sprint's "telegraph" is now *implicit motion*, not a drawn
+  line. The strategic intent survives (sprints are committed + readable) but the
+  readout is the player's visible speed/acceleration. **Hard UI requirement:**
+  speed/acceleration must be unmistakably legible (faster per-step travel, motion
+  trails, lean) or reading is unfair. Nice property: reading speed = reading
+  commitment (faster ⇒ higher angle×speed bail cost ⇒ more committed).
+
 ## Open decisions (not yet made)
 - **Momentum → bull coupling** — does `driveCollision` read current speed
   directly as the momentum term (replacing `COLLIDE_DRIVE_MOMENTUM × stepLen`)?
