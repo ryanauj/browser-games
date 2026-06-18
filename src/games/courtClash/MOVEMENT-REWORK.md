@@ -248,6 +248,17 @@ defender anchors. **Defense = anticipate the committed line, beat him to the spo
 / hold goal-side**, never chase a sprint from behind. Continuous per-step
 resolution kills the guard-lag and phantom-through bugs.
 
+## UI / interaction decisions
+
+### Q14 — How do you issue one move order (target + jog/sprint)?
+**[CHOSEN: select + explicit toggle]**
+- Tap = jog, drag = sprint (gesture-implicit) — fastest/tactile; set aside.
+- **Select + explicit toggle** *(chosen)* — tap player → tap target spot → tap a
+  Jog/Sprint toggle to confirm. Deliberate, unambiguous, precise retargeting;
+  one extra tap per order (fine given precision matters when repeated all
+  possession). Sprint orders draw the committed line (telegraph, Q15).
+- Sticky per-player stance — fewest decisions but easy to mismatch; set aside.
+
 ## Open decisions (not yet made)
 - **Momentum → bull coupling** — does `driveCollision` read current speed
   directly as the momentum term (replacing `COLLIDE_DRIVE_MOMENTUM × stepLen`)?
