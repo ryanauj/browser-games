@@ -274,6 +274,26 @@ resolution kills the guard-lag and phantom-through bugs.
   trails, lean) or reading is unfair. Nice property: reading speed = reading
   commitment (faster ⇒ higher angle×speed bail cost ⇒ more committed).
 
+### Q16 — How does a step resolve between you and the AI?
+**[CHOSEN: simultaneous — both commit hidden, resolve together]**
+- **Simultaneous** *(chosen)* — each step both sides commit orders hidden, then
+  both resolve at once. Built-in 1-step read lag ⇒ anticipation is structural
+  (predict, don't counter in-step). Fits "infer from motion"; symmetric, tense.
+  *Engine note:* resolution must be order-independent with a deterministic
+  tie-break when both teams contest a spot, so replays stay exact. The AI must
+  decide from the revealed (last-step) state only — no peeking at your committed
+  order.
+- Alternating (IGOUGO) — simpler but asymmetric info edge; set aside.
+
+## Interaction loop (after Q14–Q16)
+
+Each step: (1) you adjust orders for any subset of players — tap player, tap
+target, toggle jog/sprint; untouched players continue to their target then hold;
+(2) the AI commits its step hidden from the revealed state; (3) both resolve
+simultaneously (continuous collision/separation, deterministic tie-break); (4)
+you watch the revealed motion (speed/trails legible) and react next step. You see
+only your own orders; you read the opponent from motion.
+
 ## Open decisions (not yet made)
 - **Momentum → bull coupling** — does `driveCollision` read current speed
   directly as the momentum term (replacing `COLLIDE_DRIVE_MOMENTUM × stepLen`)?
