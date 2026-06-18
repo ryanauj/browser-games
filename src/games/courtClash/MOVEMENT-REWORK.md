@@ -294,6 +294,53 @@ simultaneously (continuous collision/separation, deterministic tie-break); (4)
 you watch the revealed motion (speed/trails legible) and react next step. You see
 only your own orders; you read the opponent from motion.
 
+## Actions in the step model
+
+### Q17 — How does a shot work?
+**[CHOSEN: multi-step gather + release]**
+- **Multi-step gather + release** *(chosen)* — a shot order starts a gather (a
+  few steps; length maybe modified by a quick-release/shooting attr); shooter is
+  rooted/slow during it. A defender who READS it and closes into his face before
+  release drops quality; hard contact can disrupt (or foul). Sprinting straight
+  into a shot = a rushed runner (lower quality) — a clean pull-up needs to set
+  first (decel, giving the D a step). Contests become timing + positional, fully
+  in the read game. Cascades to design: gather length & quality curve, rebounds
+  as a **loose-ball positional contest** on a miss, and foul-on-contact rules.
+- Instant shot — simpler, no closeout drama; set aside.
+- Set-gated instant — hybrid; set aside.
+
+### Q18 — How does passing work (and therefore steals)?
+**[CHOSEN: ball travels over steps as an object]**
+- **Ball travels over steps** *(chosen)* — a pass launches the ball as an entity
+  with position + velocity, moving a set distance/step toward its target (speed by
+  pass type / passer attr). A defender whose body intersects the lane mid-flight
+  intercepts/deflects → steals are **positional + anticipatory** (read the lane,
+  step into it), and **lead passes** (throw to a spot a cutter is sprinting to)
+  work naturally. Unifies ball-in-flight + deflections + missed catches +
+  rebounds into ONE concept: a loose/traveling ball resolved by positional
+  contest. Adds a traveling-ball entity to state (deterministic).
+- Instant, lane-at-release — simpler, no true reads/leads; set aside.
+
+### Q19 — Are screens a special action or emergent?
+**[CHOSEN: explicit screen order]**
+- **Explicit screen order** *(chosen)* — a screen is an order that, on contact,
+  briefly holds/stops the defender (a short impede), with a clear "screen set"
+  state the player can read. More legible and controllable than relying on the
+  generic collision. Cost: adds a rule plus **moving-screen / illegal-screen
+  foul** logic (screener must be set/planted; moving into the defender = foul).
+- Emergent-from-positioning — fewest rules but less legible; set aside.
+
+### Q20 — How do on-ball steals work?
+**[CHOSEN: purely positional for now; active strip deferred]**
+- **Purely positional** *(chosen for now)* — the only ways to take the ball:
+  intercept/deflect a pass in its lane (Q18), or force a loose ball via the
+  contact contest when the handler is bumped off balance. No new verb, lowest
+  foul-logic burden; strips are a consequence of good defense, not a button.
+- **Active strip attempt** — *deferred*: add later IF it proves necessary. An
+  in-range reach-in order: chance to knock the ball loose (scaled by attrs /
+  handle exposure), risking a reach-in foul on a miss. Revisit after the
+  positional model is playing.
+
 ## Open decisions (not yet made)
 - **Momentum → bull coupling** — does `driveCollision` read current speed
   directly as the momentum term (replacing `COLLIDE_DRIVE_MOMENTUM × stepLen`)?
