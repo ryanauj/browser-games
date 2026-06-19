@@ -83,6 +83,8 @@ export function createInitialState(seed: number = Date.now()): GameState {
     phase: 'play',
     players,
     ballHandlerId: null,
+    ball: null,
+    gather: null,
     offense: 'player',
     shotClock: SHOT_CLOCK_STEPS,
     score: { player: 0, ai: 0 },
@@ -136,6 +138,8 @@ function setupPossession(
     players,
     offense,
     ballHandlerId: off[0].id,
+    ball: null, // a fresh possession clears any in-flight ball / windup
+    gather: null,
     shotClock: clock,
     possession: state.possession + 1,
     events: state.events.length ? state.events : [],
@@ -441,8 +445,16 @@ function intendedStepLen(p: Player, target: Vec | null): number {
  *  speed (Q4 ramp, tracked in `sprintSpeed`); bailing onto a new heading pays an
  *  angle×speed penalty and resets the ramp (Q5/Q24). Stamina is per-mode (Q26):
  *  jog cheap, sprint drains (∝ speed), a hold recovers, plus the Q5 bail tax. */
-export function applyMovement(players: Player[], ballHandlerId: string | null): { handlerStalled: boolean } {
+export function applyMovement(
+  players: Player[],
+  ballHandlerId: string | null,
+  offense?: Side,
+): { handlerStalled: boolean } {
   const ballHandler = byId(players, ballHandlerId)
+  // Which side is on offense. Prefer the explicit `offense` (valid even when the
+  // ball is in flight and `ballHandlerId` is null); fall back to the handler's
+  // side so the order-dep probe's 2-arg call keeps its old behavior.
+  const offSide: Side | null = offense ?? ballHandler?.side ?? null
   // Opponents setting a screen are solid bodies you must go around, not through.
   const screeners = players.filter((s) => s.order.kind === 'screen')
   // Start-of-step snapshot. EVERY read below — targets, screener bodies, the bull
@@ -546,7 +558,7 @@ export function applyMovement(players: Player[], ballHandlerId: string | null): 
       if (bull) p.bull = 1 // loose handle (strip risk) + extra legs, charged below
       if (shove) shoves.push(shove)
       next = settled
-    } else if (ballHandler && p.side === ballHandler.side) {
+    } else if (offSide && p.side === offSide) {
       // Off-ball offensive movers (cutters, relocations) are merely SLOWED by
       // bodies in their lane — they don't bull, and they don't tunnel through.
       // Opponent bodies are read from `before` (each `o.pos` still equals its
@@ -740,14 +752,18 @@ function resolveShot(state: GameState, shooterId: string): GameState {
 /** Advance one STEP of motion: decay screen/drive timers, resolve planted
  *  screens, then move every player along their standing order. Mutates players.
  *  Returns whether the ball handler's drive was throttled by traffic this step. */
-function advanceMotion(players: Player[], ballHandlerId: string | null): { handlerStalled: boolean } {
+function advanceMotion(
+  players: Player[],
+  ballHandlerId: string | null,
+  offense: Side,
+): { handlerStalled: boolean } {
   for (const p of players) {
     if (p.stuck > 0) p.stuck -= 1
     if (p.primed > 0) p.primed -= 1 // a finishing boost expires if no shot followed
     p.bull = 0 // loose handle is recomputed each step by the collision
   }
   resolveScreens(players)
-  return applyMovement(players, ballHandlerId)
+  return applyMovement(players, ballHandlerId, offense)
 }
 
 function runStep(state: GameState): GameState {
@@ -773,7 +789,7 @@ function runStep(state: GameState): GameState {
   //    closeouts and rotations — BEFORE any contest resolves. This is what makes
   //    defense matter: a shot/pass/drive is judged against where defenders end
   //    up, not where they started.
-  const { handlerStalled } = advanceMotion(players, state.ballHandlerId)
+  const { handlerStalled } = advanceMotion(players, state.ballHandlerId, state.offense)
 
   const handler = byId(players, state.ballHandlerId)
 

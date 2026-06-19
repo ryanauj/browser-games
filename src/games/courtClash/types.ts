@@ -80,6 +80,47 @@ export interface Player {
   bull: number
 }
 
+/** A ball traveling on its own over steps (Q18) — a pass in flight (and, when a
+ *  shot is modeled as a flight, a launched shot). While a ball exists,
+ *  `ballHandlerId` is null: nobody holds it, so any code that keyed off a non-null
+ *  handler must treat that as a valid in-flight state. ALL fields are serialized
+ *  in `GameState`, so an in-flight pass replays byte-identical (the hard gate).
+ *
+ *  This is the FROZEN contract UI/AI build on. The shape:
+ *   - `pos`      current floor position of the ball this step.
+ *   - `vel`      velocity (heading × speed) in floor-units/step; re-oriented each
+ *                step toward `to` for a homing direct pass, fixed for a lead.
+ *   - `from`     the release point (passer/shooter spot at launch) — for the UI's
+ *                flight render and the post-resolution event stamp.
+ *   - `fromId`   who released it (passer / shooter).
+ *   - `targetId` intended receiver (a player id), or null for a pure lead-to-spot.
+ *   - `to`       the aim point: the receiver's spot (re-aimed each step for a
+ *                direct pass) or a fixed lead point / the rim (shot).
+ *   - `kind`     'pass' (thrown to a teammate) | 'shot' (launched at the rim).
+ *   - `lead`     true = a lead pass to a fixed `to` spot (a cutter runs onto it);
+ *                false = a direct pass that homes to the receiver each step.
+ *   - `steps`    steps in flight so far (for the errant-pass timeout). */
+export interface Ball {
+  pos: Vec
+  vel: Vec
+  from: Vec
+  fromId: string
+  targetId: string | null
+  to: Vec
+  kind: 'pass' | 'shot'
+  lead: boolean
+  steps: number
+}
+
+/** A shot in its windup (Q17): the shooter has committed and is rooted, gathering
+ *  for `release` more steps before the ball goes up. The defense can close and
+ *  contest DURING the gather; make%/block are read at release against where the
+ *  defenders ended up. Serialized so the windup replays exactly. */
+export interface ShotGather {
+  shooterId: string
+  release: number
+}
+
 /** Transient outcome of the most recent beat/shot, for the UI to animate. */
 export interface BeatEvent {
   kind:
@@ -102,7 +143,9 @@ export interface BeatEvent {
 export interface GameState {
   phase: Phase
   players: Player[]
-  ballHandlerId: string | null // who has the ball
+  ballHandlerId: string | null // who has the ball (null while a ball is in flight)
+  ball: Ball | null // a pass/shot traveling on its own (Q18); null = held/none
+  gather: ShotGather | null // a shot in its windup (Q17); null = no shot gathering
   offense: Side // which side is on offense
   shotClock: number // STEPS remaining this possession (Q10)
   score: Record<Side, number>
