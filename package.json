@@ -9,6 +9,7 @@
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
     "balance": "esbuild src/games/courtClash/balance.ts --bundle --platform=node --format=esm --outfile=/tmp/cc-balance.mjs && node /tmp/cc-balance.mjs",
+    "determinism": "esbuild src/games/courtClash/determinism.ts --bundle --platform=node --format=esm --outfile=/tmp/cc-determinism.mjs && node /tmp/cc-determinism.mjs",
     "prepare": "husky"
   },
   "dependencies": {

@@ -87,16 +87,27 @@ function spacingOrders(handler: Player, players: Player[], ai: Player[]): { play
     used.add(bi)
     const spot = clampToCourt(SPACE_SPOTS[bi])
     const arrived = dist(p.pos, spot) < 2.5
-    orders.push({ playerId: p.id, order: arrived ? { kind: 'idle' } : { kind: 'move', to: spot } })
+    // Off-ball relocations are reactive jogs (no committed momentum) — re-aiming
+    // each step is free, which is the point of spacing to open ground (Q13).
+    orders.push({ playerId: p.id, order: arrived ? { kind: 'idle' } : { kind: 'move', to: spot, mode: 'jog' } })
   }
   const dunk = clampToCourt(DUNKER_SPOT)
-  orders.push({ playerId: big.id, order: dist(big.pos, dunk) < 2.5 ? { kind: 'idle' } : { kind: 'move', to: dunk } })
+  orders.push({ playerId: big.id, order: dist(big.pos, dunk) < 2.5 ? { kind: 'idle' } : { kind: 'move', to: dunk, mode: 'jog' } })
   return orders
 }
 
 /**
- * The CPU floor general. Pure: reads the state, returns orders for its five
- * (and, on offense, an optional shot). Heuristics kept legible and beatable:
+ * ⚠️ PLACEHOLDER AI (movement rework, Session 1). This is the OLD per-step greedy
+ * floor general, adapted only minimally to the step engine: its `move` orders now
+ * carry an explicit jog mode (Q13) and the ball handler's `drive` is the sprint
+ * verb that builds momentum. It re-decides every step, so it never holds a
+ * committed intent across steps — meaning it can't build sprint speed the way the
+ * model intends (re-targeting resets the ramp, Q12). That's fine for exercising
+ * the engine this session; the real committed-intent + predictive-rollout planner
+ * is a LATER session (Q25). Do not mistake this for the rework's AI.
+ *
+ * Pure: reads the state, returns orders for its five (and, on offense, an optional
+ * shot). Heuristics kept legible and beatable:
  *  - Offense: shoot a good/forced look; else swing to a more open teammate;
  *    else attack the rim. Off-ball men relocate to get open.
  *  - Defense: man up by matchup; double the ball when the handler gets open,

@@ -1,4 +1,4 @@
-import { SHOT_CLOCK_BEATS, WIN_TARGET } from '../constants'
+import { SHOT_CLOCK_STEPS, WIN_TARGET } from '../constants'
 
 interface Props {
   onClose: () => void
@@ -56,7 +56,7 @@ export function HelpModal({ onClose }: Props) {
         <p className="cc-help__sec">
           Drag a player onto an opponent to <em>Guard</em> (or switch), <em>Double</em> the ball, or <em>Steal</em>{' '}
           (a gamble) — or onto a spot to <em>Help</em>. Force a miss or a steal, or run the{' '}
-          <em>{SHOT_CLOCK_BEATS}-beat shot clock</em> out for a turnover.
+          <em>{SHOT_CLOCK_STEPS}-step shot clock</em> out for a turnover.
         </p>
 
         <h3 className="cc-help__h">🔎 Reading players</h3>

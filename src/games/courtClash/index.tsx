@@ -135,7 +135,7 @@ export default function CourtClash() {
     setSelectedId(null)
     setPending(null)
     setRadial(null)
-  }, [state.possession, state.beat, state.phase])
+  }, [state.possession, state.step, state.phase])
 
   // First-run coach: advance from "tap a player" once they've selected one.
   useEffect(() => {
@@ -165,8 +165,8 @@ export default function CourtClash() {
   // The ball's flight for the beat just resolved (pass/shot/rebound/steal), fed
   // to the court to animate the ball traveling. Only shown while the beat glides.
   const ballFlight = useMemo(
-    () => deriveBallFlight(state.events, state.players, `${state.possession}-${state.beat}`),
-    [state.events, state.players, state.possession, state.beat],
+    () => deriveBallFlight(state.events, state.players, `${state.possession}-${state.step}`),
+    [state.events, state.players, state.possession, state.step],
   )
 
   // --- Risk glow inputs ----------------------------------------------------
@@ -330,21 +330,21 @@ export default function CourtClash() {
           items.push(mk('Pass', '🤝', { kind: 'pass', toId: target.id }))
           // If that teammate is within reach, you might mean to relocate, not pass.
           if (withinReach(id, target.pos)) {
-            items.push(mk('Move', '👟', { kind: 'move', to: reachClamp(id, target.pos) }))
+            items.push(mk('Move', '👟', { kind: 'move', to: reachClamp(id, target.pos), mode: 'jog' }))
           }
         } else {
           // Drop onto a teammate to set a pick FOR them (screen their defender).
           items.push(mk('Screen', '🧱', screenFor(target.id)))
-          items.push(mk('Move', '👟', { kind: 'move', to: reachClamp(id, target.pos) }))
+          items.push(mk('Move', '👟', { kind: 'move', to: reachClamp(id, target.pos), mode: 'jog' }))
         }
       } else if (onEnemy && target) {
         if (isHandler) {
           items.push(mk('Drive', '⚡', { kind: 'drive', to: reachClamp(id, target.pos, true) }))
-          items.push(mk('Move', '👟', { kind: 'move', to: spot }))
+          items.push(mk('Move', '👟', { kind: 'move', to: spot, mode: 'jog' }))
         } else {
           // Drop onto a defender to screen that man (track them, not the floor).
           items.push(mk('Screen', '🧱', { kind: 'screen', to: { ...target.pos }, markId: target.id }))
-          items.push(mk('Move', '👟', { kind: 'move', to: spot }))
+          items.push(mk('Move', '👟', { kind: 'move', to: spot, mode: 'jog' }))
         }
       } else if (isHandler) {
         // Aiming at open floor: lead a teammate breaking toward here with a pass
@@ -359,9 +359,9 @@ export default function CourtClash() {
           )
         }
         items.push(mk('Drive', '⚡', { kind: 'drive', to: burstSpot }))
-        items.push(mk('Move', '👟', { kind: 'move', to: spot }))
+        items.push(mk('Move', '👟', { kind: 'move', to: spot, mode: 'jog' }))
       } else {
-        items.push(mk('Move', '👟', { kind: 'move', to: spot }))
+        items.push(mk('Move', '👟', { kind: 'move', to: spot, mode: 'jog' }))
         items.push(mk('Screen', '🧱', { kind: 'screen', to: spot }))
         items.push(mk('Cut', '✂️', { kind: 'cut', to: burstSpot }))
       }
@@ -402,7 +402,7 @@ export default function CourtClash() {
         list.push({ label: 'Cut', run: () => issue(id, { kind: 'cut', to: reachClamp(id, BASKET, true) }) })
         list.push({
           label: 'Move →',
-          run: () => setPending({ playerId: id, need: 'point', make: (pt) => ({ kind: 'move', to: pt }), hint: 'Tap a spot within reach.', clampReach: true }),
+          run: () => setPending({ playerId: id, need: 'point', make: (pt) => ({ kind: 'move', to: pt, mode: 'jog' }), hint: 'Tap a spot within reach.', clampReach: true }),
         })
         list.push({
           label: 'Screen for →',
@@ -468,8 +468,8 @@ export default function CourtClash() {
         </div>
         <div className="cc__center">
           <div className="cc__possession">{onOffense ? '◀ OFFENSE' : 'DEFENSE ▶'}</div>
-          <div className="cc__shotclock-cap">shot clock · beats</div>
-          <div className={`cc__shotclock ${state.shotClock <= 3 ? 'cc__shotclock--warn' : ''}`} aria-label={`Shot clock: ${state.shotClock} beats`}>
+          <div className="cc__shotclock-cap">shot clock · steps</div>
+          <div className={`cc__shotclock ${state.shotClock <= 3 ? 'cc__shotclock--warn' : ''}`} aria-label={`Shot clock: ${state.shotClock} steps`}>
             {String(state.shotClock).padStart(2, '0')}
           </div>
           <div className="cc__to">first to {WIN_TARGET}</div>
