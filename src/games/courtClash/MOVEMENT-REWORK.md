@@ -341,22 +341,200 @@ only your own orders; you read the opponent from motion.
   handle exposure), risking a reach-in foul on a miss. Revisit after the
   positional model is playing.
 
-## Open decisions (not yet made)
-- **Momentum → bull coupling** — does `driveCollision` read current speed
-  directly as the momentum term (replacing `COLLIDE_DRIVE_MOMENTUM × stepLen`)?
-- **Acceleration attribute** — new attr vs derive from existing `speed`/a new
-  `agility`. Affects roster, UI badges, balance.
-- **Replan / interrupt model** — re-plan any beat (cost on bail) vs commit
-  windows vs free re-plan (momentum just resets).
-- **Defender reaction cap** — can a reactor perfectly mirror, or only within a
-  reaction radius / speed? Prevents over-sticky D (the risk that re-attaching
-  defenders smother drives and push the offense back to heaves).
-- **AI route planner** — how the CPU plans/adjusts routes for 5 men each side,
-  staying pure & cheap.
-- **Stamina economy** — recalibrate costs for continuous reaction taxes so games
-  don't gas everyone (watch `pnpm balance` stamina line).
-- **Validation gates** — keep the guardrails: shot mix (rim finishes alive),
-  defense-matters %, steals ~4, pace ~30 poss, deterministic replays.
+## Tuning / model decisions (resolved from the open list)
+
+### Q21 — Defender reaction cap (how tightly can a reacting jog defender mirror)?
+**[CHOSEN: structural caps only for now — defer an explicit cap; revisit after playtesting]**
+- From-behind sprints are already capped structurally: a reactor can't exceed
+  **jog speed** (so a built-up sprint separates, Q9) and **simultaneous resolution
+  gives a built-in 1-step read lag** (Q16). The only *unaddressed* case is
+  **jog-vs-jog half-court**, where a reactor re-aiming every micro-step could
+  mirror almost perfectly (1-step lag only) and smother the gather-room a quality
+  look needs → risk of pushing offense back to heaves.
+- **Structural-only (chosen, for now)** — rely on the jog ceiling + 1-step lag
+  alone; no new knob. Rationale: we're *assuming* the half-court smother is a
+  problem without evidence. Don't add a knob to fix an unobserved failure. **Flag
+  to revisit after playtesting** — if reactive D proves over-sticky in the
+  half-court, adopt the slide-speed cap below.
+- **Slide-speed cap** *(documented fallback)* — a defender who is *reacting*
+  (re-aiming off the revealed state) moves at a reduced react/slide speed, esp.
+  laterally, so the side that commits a straight line first wins a sliver of
+  ground each step (commitment stays readable/telegraphed). One knob (slide
+  factor); basketball-true ("you slide slower than you run"); composes with the
+  Q5 angle×speed redirect cost (which only bites at speed — this fills the
+  jog-regime gap). Makes the offensive counter explicit: commit + change
+  direction to break a mirror. **This is the first thing to try if playtest shows
+  over-sticky D.**
+- **Stat-gated mirror** — cap scales with `perimeterD`/`speed`; elite D sticky,
+  weak D lags. Most roster expression, most knobs, biggest balance risk. Can
+  layer *on top* of the slide-speed cap later (let `perimeterD` modulate the
+  slide factor) without re-opening the core.
+- **Reaction-radius gate** — defender only glues/contests within a reaction
+  radius; coarse, and reintroduces the soft auto-glue Q6 deliberately dropped.
+  Set aside.
+
+### Q22 — Momentum → bull coupling (how `driveCollision` gets the momentum term)?
+**[CHOSEN: read the current (pre-contact) sprint speed directly]**
+- Q4 already declared **bull power = current speed**; this implements it. Today
+  `driveCollision` (`engine.ts:340`) uses
+  `shoveMass(driver) + COLLIDE_DRIVE_MOMENTUM × len` (beat step length).
+- **Read current speed directly (chosen)** — momentum term = `k × currentSpeed`,
+  taken from the player's tracked sprint speed **before** the collision clips the
+  step. One source of truth: the Q4 accel ramp flows straight into contact (long
+  runway ⇒ heavy hit, standing/cutting man ⇒ light). Using the **pre-contact**
+  speed fixes a latent underread — a blocked freight-train drive has its step
+  *shortened* by the collision, so a post-clip `len` would read momentum *lowest*
+  exactly when it should read highest. Needs speed as tracked per-player state
+  (the accel model needs it anyway); retune `k` (replaces `COLLIDE_DRIVE_MOMENTUM`).
+- **Keep the `stepLen` proxy** — `COLLIDE_DRIVE_MOMENTUM × stepLen`; ≈ speed in a
+  step model and needs no new dependency, but inherits the post-clip underread
+  unless carefully fed the *intended* pre-collision length (then it's just a
+  clunkier proxy for speed). Set aside.
+- **Decouple: bull power from committed straight-step count, not instantaneous
+  speed** — abstract, and contradicts Q4. Set aside.
+
+### Q23 — Acceleration attribute (where the Q4 ramp rate comes from)?
+**[CHOSEN: derive accel from existing `speed`; new `acceleration` attr is the explicit upgrade path]**
+- Roster has 8 attrs, no `agility`; `speed` currently only sets *top-speed*
+  bonus (`SPEED_STEP_BONUS`).
+- **Derive from `speed` (chosen)** — `speed` becomes "athleticism": both top
+  speed *and* ramp rate. Zero new surface area — roster, UI badges
+  (`ATTR_META`/`signatureAttr`/`heatTier`), and the balance harness all stay as-is.
+  Downside: can't model the slow-twitch speedster (high top speed, slow first
+  step) or the quick-but-not-fast guard — a minor loss for a basketball sim. Same
+  principle as Q21: don't add a knob for a need we haven't observed yet.
+- **New `acceleration`/`agility` attr (9th stat)** *(documented upgrade path)* —
+  the moment playtesting shows we want to model **top speed** and **first-step
+  quickness** independently, promote ramp rate to its own attribute. Cleanly
+  separates quick-twitch from top speed and unlocks the lumbering-big-with-
+  long-speed and shifty-quick-guard archetypes; natural second job is to also
+  modulate the Q5 angle×speed redirect cost (agile players bail/cut cheaper).
+  **Costs when adopted:** every roster player needs a value (regen); UI gains a
+  9th badge in `ATTR_META` (needs a glyph+label; `signatureAttr`/`heatTier` pick
+  it up free since they iterate `ATTR_META`); `balance.ts` recalibration. **This
+  is the first thing to do if accel-as-`speed` feels too flat.**
+- **Inverse of `strength`/mass** — heavy bulls lumber, light players pop; no new
+  attr, self-balancing, but overloads `strength` a third way, entangles balance
+  (every strength tweak moves accel), and forbids the strong-AND-quick wing. Set
+  aside.
+
+### Q24 — Replan / interrupt model (can a committed sprint be re-steered each step)?
+**[CHOSEN: free re-plan any step, governed by the Q5 cost — no hard lock]**
+- Sharpens Q12 ("bail = re-target before arrival, redirect cost + accel reset"):
+  is there ever a hard window where you *can't* re-steer?
+- **Free re-plan, Q5 cost (chosen)** — you may issue a new order to any player
+  every step; bailing a sprint pays the **Q5 angle×speed** penalty and **resets
+  the accel ramp**. No hard lock — commitment is *purely economic*, never
+  mechanical. Direct synthesis of Q5 (cost) + Q7 (per-step re-aim) + Q11 (tap per
+  step) + Q12 (bail). **Captures hard-lock readability emergently:** bailing at
+  top speed is so expensive that a full-speed sprinter effectively can't cut
+  sharply → predictable in practice without ever being frozen. Keeps agency +
+  bluff (Q15) high; avoids the rigidity Q2 rejected.
+- **Commit windows (hard lock for N steps)** — sprint locks the line before you
+  can re-steer; maximally readable but removes mid-sprint agency, contradicts Q7,
+  and is the "locked heading" Q2 already rejected. Set aside.
+- **Free re-plan, no cost (momentum just resets)** — re-steer freely, bail only
+  drops you to jog/zero-accel with no angle×speed tax. Partly undoes Q5; bailing
+  too cheap, commitment loses teeth. Set aside.
+
+### Q25 — AI route planner (orchestrate routes/shots/passes/leads/screens, pure & cheap)?
+**[CHOSEN: committed intents in serialized state + a predictive (Q16-legal) rollout selector]**
+- Today's `aiPlan` (`ai.ts:105`) is a pure, **stateless, per-beat greedy** floor
+  general (one order/player + optional shot via `shotEV`/`spacingOrders`/matchup
+  scoring). At step cadence (~40–60 steps/possession) it must drive routes,
+  multi-step gathers, passes + leads, and screens for 5 men.
+- **The load-bearing choice** is whether the AI **holds a committed intent across
+  steps**. It must: the model only grants sprint speed by *committing* a line, and
+  re-targeting **resets the accel ramp** (Q12). So an AI that re-decides every
+  step can never build momentum.
+- **Committed intents + predictive rollout (chosen).** Each AI player carries a
+  small **intent** in replay-exact serialized state:
+  `{ kind: drive|cut|space|screen|gather|guard|help|contest, target,
+  mode: jog|sprint, guard: abortCond, ttl }`. Per step: if the intent's guard
+  trips / ttl expires / it's fulfilled → **re-select**; otherwise **continue the
+  committed line** (re-emit the target so momentum keeps building). The AI thus
+  *commits like a human* — readable, telegraphed, symmetric, beatable. **Selector
+  = predictive rollout:** when an intent fires, choose it by a short forward
+  rollout (predict the opponent as static / a fixed policy, roll the AI's own
+  candidate routes forward a few steps, pick best) rather than a one-step greedy
+  score. Pure & deterministic. Only the handler runs the richest branch
+  (gather vs lead-pass vs drive, with lane-interception risk from the loose-ball
+  primitive); off-ball is cheap cut/station selection; guards are simple
+  distance/lane checks.
+- **Selector richness is a swappable knob** along one axis:
+  - *greedy score* — cheapest; the **downgrade fallback** if rollout cost bites.
+  - *predictive rollout* — **chosen**; richer, still Q16-legal because it
+    **predicts** the opponent, never reads your hidden order.
+  - *best-response* — **off-limits**: to be useful at the current simultaneous
+    step it needs your *actual* committed order, which Q16 hides (it would have
+    to peek/cheat or resolve before you commit). The one line not to cross.
+- **Stateless reactive per-step (A)** — no stored intent, re-derive every step.
+  Cheapest/purest but re-targeting resets accel every step → AI never builds
+  sprint speed (can't drive downhill, can't sprint to cut off a spot).
+  **Disqualified by the model.**
+- *Correction logged:* an earlier framing called *all* lookahead a Q16 violation
+  — wrong. Only **best-response** lookahead does; **predictive** lookahead is
+  legal, and its cheap form is just a richer intent-selector (it collapses into
+  this option, not a rival architecture).
+
+### Q26 — Stamina economy shape for the step model?
+**[CHOSEN: per-step mode cost + Q5 redirect tax + recover-when-slow; magnitudes deferred to `pnpm balance`]**
+- `STAMINA_COST` is per-**beat** by exertion kind (`idle -6, move 5, cut 11,
+  drive 12, …`). Q10 deletes beats and the discrete cut/drive verbs; movement is
+  continuous jog/sprint per step plus new continuous taxes (Q5 redirect, accel).
+  Q2's payoff *depends* on a continuous reaction tax tiring a mirroring defender.
+  Worry: now everyone reacts continuously, so magnitudes could gas the floor.
+- **Per-step mode + Q5 tax (chosen)** — port `STAMINA_COST` from beat-kind to
+  **step-mode**: jog ≈ cheap, **sprint drains** (scaled by speed/accel), idle/slow
+  **recovers**; the **Q5 redirect cost doubles as the stamina tax** — that *is*
+  the reaction tax. Right gradient falls out for free: mirroring a *jogging*
+  handler is low-speed ⇒ low angle×speed ⇒ cheap (consistent with Q21 deferring
+  the jog-smother); mirroring a *sprinter* forces sprint+redirect ⇒ expensive ⇒
+  the mirror tires and surrenders a step (Q2). Decide the **shape** now; **defer
+  magnitudes** to `pnpm balance` once a step sim exists (can't calibrate a sim
+  that isn't built — watch the stamina avg/min line).
+- **Continuous work model (drain ∝ speed²/work)** — super-linear; sustained
+  sprints gas you, fewer per-kind constants, more self-balancing — but a bigger
+  departure, harder to map to existing targets, swingier sprint pacing. Set aside
+  (a possible later variation).
+- **Defer entirely (placeholder costs)** — decide nothing until the engine runs.
+  Honest but punts the structural what's-taxed/recover-when question we can settle
+  now. Set aside.
+
+### Q27 — Validation gates (which guardrails become hard gates vs advisory)?
+**[CHOSEN: advisory-report all balance/feel metrics; keep only deterministic-replay as a correctness check; promote feel metrics to hard gates later once a config feels good]**
+- `balance.ts` currently **reports** (shot mix, 3PA, steals/blocks/clock-TOs,
+  pace, stamina avg/min, defense-matters %) but mostly doesn't *assert*; pace is
+  keyed on beats (Q10 deletes beats; possessions survive).
+- **Key reframe (from discussion):** two different things were wearing the
+  "validation gate" label, and they're not the same:
+  1. **Balance/feel metrics** (shot mix, steals, pace, defense-matters %). As
+     gates these only assert *"don't regress from current state"* — but current
+     play isn't good, so freezing this baseline is counterproductive: it locks in
+     a config we don't like and false-fails the moment the rework *legitimately*
+     moves balance (the whole point). **No business being hard gates now.**
+  2. **Deterministic replay.** Not a feel target — a **correctness invariant**
+     (same seed + inputs ⇒ byte-identical game). The rework structurally depends
+     on it (pure reducer, sub-steps replay exactly); if it breaks, that's a
+     *non-determinism bug*, not a balance opinion. It's also load-bearing for the
+     harness itself: if the sim isn't deterministic, every metric it prints is
+     noise. Worth keeping regardless of whether play feels good — really a
+     correctness *test*, not a balance gate.
+- **Advisory + keep determinism (chosen)** — all balance/feel metrics stay
+  **advisory prints**; the **only** thing asserted is **deterministic replay**
+  (protects the harness, catches non-determinism bugs). Migrate the pace print
+  `beats/game → steps/game`. **Promote feel metrics to hard gates LATER** — once
+  the rework converges on a config that feels good and we want to *defend that*
+  ("this is working, lock it in").
+- **Pure advisory, nothing asserted** — even simpler, but a non-determinism bug
+  would silently make every harness number untrustworthy. Set aside (determinism
+  is cheap to keep and protects everything else).
+- **Tiered / all-hard gates now** — assert invariants + band-gate rates from the
+  start. Set aside: brittle mid-rework and freezes a baseline we don't like. This
+  is the *destination* (post-convergence), not the *starting* posture.
+
+*All open decisions from the rework are now resolved (Q21–Q27). Remaining work is
+implementation + harness tuning against `pnpm balance`, not further spec.*
 
 ## Variation ideas to try later (compare/combine)
 
