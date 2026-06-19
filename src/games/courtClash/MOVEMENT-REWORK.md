@@ -418,9 +418,26 @@ only your own orders; you read the opponent from motion.
   (every strength tweak moves accel), and forbids the strong-AND-quick wing. Set
   aside.
 
+### Q24 — Replan / interrupt model (can a committed sprint be re-steered each step)?
+**[CHOSEN: free re-plan any step, governed by the Q5 cost — no hard lock]**
+- Sharpens Q12 ("bail = re-target before arrival, redirect cost + accel reset"):
+  is there ever a hard window where you *can't* re-steer?
+- **Free re-plan, Q5 cost (chosen)** — you may issue a new order to any player
+  every step; bailing a sprint pays the **Q5 angle×speed** penalty and **resets
+  the accel ramp**. No hard lock — commitment is *purely economic*, never
+  mechanical. Direct synthesis of Q5 (cost) + Q7 (per-step re-aim) + Q11 (tap per
+  step) + Q12 (bail). **Captures hard-lock readability emergently:** bailing at
+  top speed is so expensive that a full-speed sprinter effectively can't cut
+  sharply → predictable in practice without ever being frozen. Keeps agency +
+  bluff (Q15) high; avoids the rigidity Q2 rejected.
+- **Commit windows (hard lock for N steps)** — sprint locks the line before you
+  can re-steer; maximally readable but removes mid-sprint agency, contradicts Q7,
+  and is the "locked heading" Q2 already rejected. Set aside.
+- **Free re-plan, no cost (momentum just resets)** — re-steer freely, bail only
+  drops you to jog/zero-accel with no angle×speed tax. Partly undoes Q5; bailing
+  too cheap, commitment loses teeth. Set aside.
+
 ## Open decisions (not yet made)
-- **Replan / interrupt model** — re-plan any beat (cost on bail) vs commit
-  windows vs free re-plan (momentum just resets).
 - **AI route planner** — how the CPU plans/adjusts routes for 5 men each side,
   staying pure & cheap.
 - **Stamina economy** — recalibrate costs for continuous reaction taxes so games
