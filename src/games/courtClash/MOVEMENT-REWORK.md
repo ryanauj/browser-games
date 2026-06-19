@@ -502,31 +502,36 @@ only your own orders; you read the opponent from motion.
   now. Set aside.
 
 ### Q27 — Validation gates (which guardrails become hard gates vs advisory)?
-**[CHOSEN: tiered gates — hard invariants + band gates + advisory; may switch to all-advisory during heavy iteration]**
+**[CHOSEN: advisory-report all balance/feel metrics; keep only deterministic-replay as a correctness check; promote feel metrics to hard gates later once a config feels good]**
 - `balance.ts` currently **reports** (shot mix, 3PA, steals/blocks/clock-TOs,
   pace, stamina avg/min, defense-matters %) but mostly doesn't *assert*; pace is
-  keyed on beats (Q10 deletes beats; possessions survive). Need gates strict
-  enough to catch real regressions, loose enough not to false-fail on *intended*
-  balance shifts.
-- **Tiered gates (chosen):**
-  - **Hard invariants (always assert):** *deterministic replay* (binary; the
-    rework's stated hard constraint that sub-steps replay exactly);
-    *rim-finishes-alive* (layup share > floor, not zero); *defense-matters*
-    (guarding cuts AI pts/poss by ≥ a floor %) — the headline property the rework
-    defends.
-  - **Band gates (assert as wide ranges, catch gross breakage only):** steals ~4
-    and pace ~30 poss — fail on 0 steals / 5 possessions, not on feel drift.
-  - **Advisory (print only):** full shot-mix distribution, 3P%, stamina curve.
-  - Migrate the pace print `beats/game → steps/game` (possessions target
-    unchanged).
-- **All hard gates, fixed ranges** — strictest, but brittle mid-rework: the step
-  model legitimately moves shot mix / pace, so tightly-banded feel metrics
-  false-fail and red gets ignored. Set aside.
-- **All advisory (status quo, print only)** — zero false failures but too loose;
-  easy to silently regress rim finishes or replay determinism. Set aside **for
-  now** — *we may want this at some point*: during heavy exploratory iteration the
-  hard gates themselves can get in the way, so a temporary all-advisory mode (or
-  a flag to mute gates) is a useful escape hatch while the step model is in flux.
+  keyed on beats (Q10 deletes beats; possessions survive).
+- **Key reframe (from discussion):** two different things were wearing the
+  "validation gate" label, and they're not the same:
+  1. **Balance/feel metrics** (shot mix, steals, pace, defense-matters %). As
+     gates these only assert *"don't regress from current state"* — but current
+     play isn't good, so freezing this baseline is counterproductive: it locks in
+     a config we don't like and false-fails the moment the rework *legitimately*
+     moves balance (the whole point). **No business being hard gates now.**
+  2. **Deterministic replay.** Not a feel target — a **correctness invariant**
+     (same seed + inputs ⇒ byte-identical game). The rework structurally depends
+     on it (pure reducer, sub-steps replay exactly); if it breaks, that's a
+     *non-determinism bug*, not a balance opinion. It's also load-bearing for the
+     harness itself: if the sim isn't deterministic, every metric it prints is
+     noise. Worth keeping regardless of whether play feels good — really a
+     correctness *test*, not a balance gate.
+- **Advisory + keep determinism (chosen)** — all balance/feel metrics stay
+  **advisory prints**; the **only** thing asserted is **deterministic replay**
+  (protects the harness, catches non-determinism bugs). Migrate the pace print
+  `beats/game → steps/game`. **Promote feel metrics to hard gates LATER** — once
+  the rework converges on a config that feels good and we want to *defend that*
+  ("this is working, lock it in").
+- **Pure advisory, nothing asserted** — even simpler, but a non-determinism bug
+  would silently make every harness number untrustworthy. Set aside (determinism
+  is cheap to keep and protects everything else).
+- **Tiered / all-hard gates now** — assert invariants + band-gate rates from the
+  start. Set aside: brittle mid-rework and freezes a baseline we don't like. This
+  is the *destination* (post-convergence), not the *starting* posture.
 
 *All open decisions from the rework are now resolved (Q21–Q27). Remaining work is
 implementation + harness tuning against `pnpm balance`, not further spec.*
