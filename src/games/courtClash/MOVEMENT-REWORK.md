@@ -393,9 +393,32 @@ only your own orders; you read the opponent from motion.
 - **Decouple: bull power from committed straight-step count, not instantaneous
   speed** — abstract, and contradicts Q4. Set aside.
 
+### Q23 — Acceleration attribute (where the Q4 ramp rate comes from)?
+**[CHOSEN: derive accel from existing `speed`; new `acceleration` attr is the explicit upgrade path]**
+- Roster has 8 attrs, no `agility`; `speed` currently only sets *top-speed*
+  bonus (`SPEED_STEP_BONUS`).
+- **Derive from `speed` (chosen)** — `speed` becomes "athleticism": both top
+  speed *and* ramp rate. Zero new surface area — roster, UI badges
+  (`ATTR_META`/`signatureAttr`/`heatTier`), and the balance harness all stay as-is.
+  Downside: can't model the slow-twitch speedster (high top speed, slow first
+  step) or the quick-but-not-fast guard — a minor loss for a basketball sim. Same
+  principle as Q21: don't add a knob for a need we haven't observed yet.
+- **New `acceleration`/`agility` attr (9th stat)** *(documented upgrade path)* —
+  the moment playtesting shows we want to model **top speed** and **first-step
+  quickness** independently, promote ramp rate to its own attribute. Cleanly
+  separates quick-twitch from top speed and unlocks the lumbering-big-with-
+  long-speed and shifty-quick-guard archetypes; natural second job is to also
+  modulate the Q5 angle×speed redirect cost (agile players bail/cut cheaper).
+  **Costs when adopted:** every roster player needs a value (regen); UI gains a
+  9th badge in `ATTR_META` (needs a glyph+label; `signatureAttr`/`heatTier` pick
+  it up free since they iterate `ATTR_META`); `balance.ts` recalibration. **This
+  is the first thing to do if accel-as-`speed` feels too flat.**
+- **Inverse of `strength`/mass** — heavy bulls lumber, light players pop; no new
+  attr, self-balancing, but overloads `strength` a third way, entangles balance
+  (every strength tweak moves accel), and forbids the strong-AND-quick wing. Set
+  aside.
+
 ## Open decisions (not yet made)
-- **Acceleration attribute** — new attr vs derive from existing `speed`/a new
-  `agility`. Affects roster, UI badges, balance.
 - **Replan / interrupt model** — re-plan any beat (cost on bail) vs commit
   windows vs free re-plan (momentum just resets).
 - **AI route planner** — how the CPU plans/adjusts routes for 5 men each side,
