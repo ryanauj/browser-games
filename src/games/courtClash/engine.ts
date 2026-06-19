@@ -20,7 +20,12 @@ import {
   LEAD_CATCH_RADIUS,
   OPENNESS_SHOT_WEIGHT,
   OREB_BASE,
+  PASS_CATCH_RADIUS,
+  PASS_INTERCEPT_RADIUS,
   PASS_LANE_RADIUS,
+  PASS_MAX_STEPS,
+  PASS_SPEED_BASE,
+  PASS_SPEED_PASSING,
   PASS_STEAL_BASE,
   PASS_STEAL_STAT_WEIGHT,
   REDIRECT_FREE_ANGLE,
@@ -71,7 +76,7 @@ import {
 import { aiPlan } from './ai'
 import { ARCHETYPES, buildPlayers } from './roster'
 import { nextRandom } from './rng'
-import type { Action, BeatEvent, GameState, Order, Player, Side, Vec } from './types'
+import type { Action, Ball, BeatEvent, GameState, Order, Player, Side, Vec } from './types'
 
 // ---------------------------------------------------------------------------
 // Setup
@@ -749,6 +754,113 @@ function resolveShot(state: GameState, shooterId: string): GameState {
   return setupPossession({ ...state, players, rngState: r.next, events, log }, def, SHOT_CLOCK_STEPS, log)
 }
 
+/** Floor units a pass covers per STEP — flat by pass type/passer (Q18). */
+function passSpeedOf(p: Player): number {
+  return PASS_SPEED_BASE + (p.attr.passing / 99) * PASS_SPEED_PASSING
+}
+
+/** Build the traveling-ball entity for a pass leaving `passer` (Q18/Q31). A lead
+ *  pass aims at the fixed point `lead` (a cutter runs onto it); a direct pass
+ *  homes onto the receiver each step (`to` re-aimed in advanceFlight). */
+function launchPass(passer: Player, receiver: Player, lead?: Vec): Ball {
+  const isLead = !!lead
+  const to = clampToCourt(isLead ? lead! : receiver.pos)
+  const dir = unitTo(passer.pos, to) ?? { x: 0, y: 1 }
+  const speed = passSpeedOf(passer)
+  return {
+    pos: { ...passer.pos },
+    vel: { x: dir.x * speed, y: dir.y * speed },
+    from: { ...passer.pos },
+    fromId: passer.id,
+    targetId: receiver.id,
+    to,
+    kind: 'pass',
+    lead: isLead,
+    steps: 0,
+  }
+}
+
+/** Advance a ball in flight one STEP (Q18/Q31), AFTER the players have moved this
+ *  step (so the lane it crosses is read against where defenders ended up — the
+ *  read-the-lane interception of Q32). Returns the next GameState: a catch hands
+ *  the ball to the receiver; a defender body in the travel lane picks it off
+ *  (possession flips); a lead that out-runs its catcher sails out (turnover);
+ *  otherwise the ball keeps flying and the clock ticks. Pure + deterministic —
+ *  interception is geometric (no roll), so an in-flight pass replays exactly. */
+function advanceFlight(state: GameState, players: Player[], r: Roll): GameState {
+  const ball: Ball = {
+    ...state.ball!,
+    pos: { ...state.ball!.pos },
+    vel: { ...state.ball!.vel },
+    from: { ...state.ball!.from },
+    to: { ...state.ball!.to },
+    steps: state.ball!.steps + 1,
+  }
+  const offense = state.offense
+  const def = opponentOf(offense)
+  const receiver = byId(players, ball.targetId)
+  let log = state.log
+
+  // A direct pass HOMES: re-aim at the receiver's current spot each step so it
+  // curves onto a moving target. A lead pass keeps its fixed aim point.
+  if (!ball.lead && receiver) ball.to = { ...receiver.pos }
+  const speed = Math.hypot(ball.vel.x, ball.vel.y)
+  const dir = unitTo(ball.pos, ball.to)
+  if (dir) ball.vel = { x: dir.x * speed, y: dir.y * speed }
+
+  const prev = { ...ball.pos }
+  ball.pos = clampToCourt(stepToward(ball.pos, ball.to, speed)) // never overshoot the aim
+
+  // INTERCEPTION (Q32): the nearest defender body in the travel segment picks it
+  // off — purely positional. distToSegment handles a body anywhere along prev→pos.
+  let thief: Player | null = null
+  let bestLane = PASS_INTERCEPT_RADIUS
+  for (const d of players) {
+    if (d.side !== def) continue
+    const laneD = distToSegment(d.pos, prev, ball.pos)
+    if (laneD < bestLane) {
+      bestLane = laneD
+      thief = d
+    }
+  }
+  if (thief) {
+    const events: BeatEvent[] = [
+      { kind: 'steal', by: thief.id, from: ball.from, to: { ...thief.pos }, text: `${thief.name} reads the lane — pick!` },
+    ]
+    log = pushLog(log, `🧤 ${thief.name} steps into the lane and picks it off!`)
+    return setupPossession({ ...state, players, ball: null, rngState: r.next, events, log }, thief.side, SHOT_CLOCK_STEPS, log)
+  }
+
+  // CATCH: a direct pass homes to the receiver; gather once it's on them.
+  if (receiver && dist(ball.pos, receiver.pos) <= PASS_CATCH_RADIUS) {
+    return catchPass(state, players, ball, receiver, r, log)
+  }
+
+  // Arrived at the aim point — for a lead pass, the cutter must be there to gather
+  // it; otherwise it's sailed into space (an errant pass the defense recovers).
+  if (dist(ball.pos, ball.to) <= ARRIVE_EPS || ball.steps >= PASS_MAX_STEPS) {
+    if (receiver && dist(receiver.pos, ball.pos) <= LEAD_CATCH_RADIUS) {
+      return catchPass(state, players, ball, receiver, r, log)
+    }
+    const events: BeatEvent[] = [
+      { kind: 'turnover', by: ball.fromId, from: ball.from, to: { ...ball.pos }, text: 'Errant pass' },
+    ]
+    log = pushLog(log, `🟠 the pass sails out of reach — ${sideName(def)} ball.`)
+    return setupPossession({ ...state, players, ball: null, rngState: r.next, events, log }, def, SHOT_CLOCK_STEPS, log)
+  }
+
+  // Still in flight — commit the ball, tick the clock.
+  return finalizeClock({ ...state, players, ball, rngState: r.next, events: [], log })
+}
+
+/** Hand a caught ball to the receiver: they gather and go idle (catch-and-decide),
+ *  becoming the new ball handler. */
+function catchPass(state: GameState, players: Player[], ball: Ball, receiver: Player, r: Roll, log: string[]): GameState {
+  receiver.order = { kind: 'idle' }
+  const events: BeatEvent[] = [{ kind: 'pass', from: ball.from, to: { ...receiver.pos }, by: receiver.id, text: 'Pass' }]
+  return finalizeClock({ ...state, players, ballHandlerId: receiver.id, ball: null, rngState: r.next, events, log })
+}
+
 /** Advance one STEP of motion: decay screen/drive timers, resolve planted
  *  screens, then move every player along their standing order. Mutates players.
  *  Returns whether the ball handler's drive was throttled by traffic this step. */
@@ -791,6 +903,11 @@ function runStep(state: GameState): GameState {
   //    up, not where they started.
   const { handlerStalled } = advanceMotion(players, state.ballHandlerId, state.offense)
 
+  // BALL IN FLIGHT (Q18): no one holds it — players have moved this step (so the
+  // travel lane is read against where the defense ended up), now advance the ball
+  // and resolve a catch / lane interception / errant sail. No handler logic runs.
+  if (state.ball) return advanceFlight(state, players, r)
+
   const handler = byId(players, state.ballHandlerId)
 
   // 3. A committed CPU shot resolves against the post-movement floor — but the
@@ -809,40 +926,18 @@ function runStep(state: GameState): GameState {
     // Shot passed up; ball stays, clock ticks, the CPU re-plans next beat.
   }
 
-  // 4. A pass called by the ball handler resolves this beat (one-shot).
+  // 4. A pass called by the ball handler LAUNCHES the traveling ball (Q18): it
+  //    leaves the passer's hand this step and flies over the coming steps; nobody
+  //    holds it (ballHandlerId → null) until a teammate gathers it or a defender
+  //    reads the lane. The ball travels its first step immediately (no frozen
+  //    launch step). A direct pass homes to the receiver; a lead aims at a spot.
   if (handler && handler.order.kind === 'pass') {
     const target = byId(players, handler.order.toId)
     const lead = handler.order.lead
     handler.order = { kind: 'idle' }
     if (target && target.side === handler.side) {
-      // Lead pass to a cutter: they gather it in stride at the spot you aimed,
-      // clamped to one gather stride from where their cut took them this beat
-      // (movement already ran). If the ball is aimed well past where the receiver
-      // can reach — too far ahead of the cut, or out into empty floor — it sails
-      // away untouched: an errant pass the defense recovers.
-      if (lead) {
-        const aim = clampToCourt(lead)
-        const catchPoint = clampToCourt(stepToward(target.pos, aim, reachOf(target, true)))
-        if (dist(catchPoint, aim) > LEAD_CATCH_RADIUS) {
-          const def = opponentOf(handler.side)
-          events.push({ kind: 'turnover', from: handler.pos, to: aim, by: handler.id, text: 'Errant pass' })
-          log = pushLog(log, `🟠 ${handler.name} sails it out of reach — ${sideName(def)} ball.`)
-          return setupPossession({ ...state, players, rngState: r.next, events, log }, def, SHOT_CLOCK_STEPS, log)
-        }
-        target.pos = catchPoint
-      }
-      // The steal check then judges the lane to that catch point.
-      const { p: stealP, thief } = passStealChance(players, handler, target)
-      if (thief && r.roll(stealP)) {
-        events.push({ kind: 'steal', by: thief.id, from: handler.pos, to: { ...thief.pos }, text: `${thief.name} steals it!` })
-        log = pushLog(log, `🧤 ${thief.name} jumps the lane — steal!`)
-        return setupPossession({ ...state, players, rngState: r.next, events, log }, thief.side, SHOT_CLOCK_STEPS, log)
-      }
-      events.push({ kind: 'pass', from: handler.pos, to: target.pos, by: target.id, text: 'Pass' })
-      // Catch and decide: the receiver gathers and goes idle so you (or the CPU)
-      // pick the next action, rather than carrying on a stale cut with the ball.
-      target.order = { kind: 'idle' }
-      return finalizeClock({ ...state, players, ballHandlerId: target.id, rngState: r.next, events, log })
+      const ball = launchPass(handler, target, lead)
+      return advanceFlight({ ...state, players, ball, ballHandlerId: null }, players, r)
     }
   }
 
