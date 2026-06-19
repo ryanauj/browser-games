@@ -1,7 +1,8 @@
 import {
+  ACCEL_BASE,
+  ACCEL_SPEED,
   BASE_STEP,
   BASKET,
-  BURST_FACTOR,
   CONTACT_RADIUS,
   CONTACT_SLOW,
   COURT_H,
@@ -11,6 +12,7 @@ import {
   OPEN_DISTANCE,
   RIM_RADIUS,
   SPEED_STEP_BONUS,
+  SPRINT_TOP_FACTOR,
   STAMINA_REACH_MIN,
   STRENGTH_RELIEF,
   THREE_PT_RADIUS,
@@ -21,13 +23,44 @@ export function dist(a: Vec, b: Vec): number {
   return Math.hypot(a.x - b.x, a.y - b.y)
 }
 
-/** Floor units a player can cover in one beat. Driven by speed, then scaled
- *  continuously by stamina (so fatigue is always felt, not just past a cliff).
- *  The single source of truth for movement, the reach ring, and drag clamping. */
+/** Floor units a player covers in one STEP at a flat JOG (Q4: jog = flat, no
+ *  momentum). Driven by speed, then scaled continuously by stamina (so fatigue
+ *  is always felt, not just past a cliff). The single source of truth for jog
+ *  movement, the reach ring, and drag clamping. `burst=true` returns the SPRINT
+ *  TOP speed (the outer reach a committed sprint asymptotes to — used for the
+ *  reach ring and lead-pass gather stride, not as a per-step jump). */
 export function reachOf(p: Player, burst = false): number {
   const base = BASE_STEP + (p.attr.speed / 99) * SPEED_STEP_BONUS
   const staminaFactor = STAMINA_REACH_MIN + (1 - STAMINA_REACH_MIN) * (p.stamina / 100)
-  return base * staminaFactor * (burst ? BURST_FACTOR : 1)
+  return base * staminaFactor * (burst ? SPRINT_TOP_FACTOR : 1)
+}
+
+/** A player's sprint top speed (floor-units/step) — the ceiling the accel ramp
+ *  builds toward along a committed line (Q4). */
+export function sprintTopOf(p: Player): number {
+  return reachOf(p, true)
+}
+
+/** Fraction of the remaining (top − current) sprint-speed gap a player closes per
+ *  committed step — the acceleration (Q4), derived from `speed` (Q23: no new
+ *  attr — quick-twitch players ramp sooner; bigs lumber up). */
+export function accelFracOf(p: Player): number {
+  return ACCEL_BASE + (p.attr.speed / 99) * ACCEL_SPEED
+}
+
+/** Unit heading from `from` to `to`, or null if coincident. */
+export function unitTo(from: Vec, to: Vec): Vec | null {
+  const dx = to.x - from.x
+  const dy = to.y - from.y
+  const d = Math.hypot(dx, dy)
+  if (d < 1e-9) return null
+  return { x: dx / d, y: dy / d }
+}
+
+/** Angle (radians, 0..π) between two unit headings. */
+export function angleBetween(a: Vec, b: Vec): number {
+  const dot = Math.max(-1, Math.min(1, a.x * b.x + a.y * b.y))
+  return Math.acos(dot)
 }
 
 export function distToRim(p: Vec): number {

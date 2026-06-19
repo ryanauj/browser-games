@@ -536,6 +536,43 @@ only your own orders; you read the opponent from motion.
 *All open decisions from the rework are now resolved (Q21–Q27). Remaining work is
 implementation + harness tuning against `pnpm balance`, not further spec.*
 
+## Implementation-clarification decisions (logged during Session 1 — core engine)
+
+These came up while building Phases 1–2 and weren't pinned down above; recorded
+here in the same format so they can be swapped later.
+
+### Q28 — Do the `cut`/`drive` order verbs survive, or fold into `move`+mode?
+**[CHOSEN: retain `drive`/`cut` as sprint-mode specializations; defer the verb cleanup to the actions session]**
+- Q13 adds `mode: 'jog'|'sprint'` to `move`; Q26's aside says Q10 "deletes the
+  discrete cut/drive verbs." Folding everything into `move`+mode is the clean
+  endpoint, but `drive` carries action semantics this session doesn't touch —
+  solid-body `driveCollision`, the on-ball strip check, the finishing prime — and
+  the deferred-actions code + UI (`index.tsx`, `Court.tsx`) still construct/read
+  the verbs.
+- **Retain as sprint specializations (chosen)** — `move` gets the explicit
+  `mode`; `drive`/`cut` are treated as `sprint` everywhere movement is computed
+  (one `moveModeOf(order)` maps them), so they ride the SAME accel ramp + redirect
+  + momentum machinery. Lowest-churn, keeps the deferred verbs working, and the
+  movement physics are genuinely unified under the hood. The literal verb deletion
+  (drive ⇒ "ball handler + move/sprint at the rim") lands in the **actions
+  session** when shots/strips/screens are reworked anyway.
+- **Delete now, fold into `move`** — the clean schema, but forces a rewrite of the
+  out-of-scope action/UI code this session and risks regressions in systems we're
+  told not to touch. Set aside (the destination, not this session's step).
+
+### Q29 — Does decelerating a sprint to a jog (not a turn) pay the Q5 tax?
+**[CHOSEN: only a sprint→new-heading turn pays angle×speed; a straight decel/stop is free]**
+- Q5 is "angle×speed." A clean stop or downshift to a jog has no *angle*, so the
+  cost is ill-defined.
+- **Turn-only tax (chosen)** — the redirect cost fires only when a player is
+  sprinting AND re-aims onto a new heading beyond `REDIRECT_FREE_ANGLE`; the tax
+  and ramp-reset both scale with the turn. Dropping to a jog (or arriving) just
+  decelerates the ramp to zero for free — consistent with Q12's "arrival = a
+  natural decel/stop." Keeps a gentle curve nearly free and a hard cut at speed
+  brutal, without taxing an honest stop.
+- **Tax any speed loss** — would also bite a straight stop; over-penalizes and
+  muddies the "commit a *line*" reading. Set aside.
+
 ## Variation ideas to try later (compare/combine)
 
 - Accel ramp (Q4) **+** engine-internal chaining (Q3 alt) as a low-risk first

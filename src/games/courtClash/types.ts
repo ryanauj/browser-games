@@ -27,14 +27,20 @@ export interface Attributes {
   interiorD: number
 }
 
-/** A player's standing order. Persists across beats until the coach changes it.
+/** Jog = flat, reactive, no momentum (cheap to re-aim). Sprint = commit a
+ *  target, accelerate along the line, telegraphed, pay an angle×speed penalty to
+ *  bail (Q13). */
+export type MoveMode = 'jog' | 'sprint'
+
+/** A player's standing order. Persists across steps until the coach changes it.
+ *  A movement order moves toward its target each step and HOLDS on arrival (Q12).
  *  One-shot orders (pass, shoot) clear themselves once resolved. */
 export type Order =
   // offense
   | { kind: 'idle' }
-  | { kind: 'move'; to: Vec } // relocate / spot up (jog)
-  | { kind: 'cut'; to: Vec } // hard cut toward a spot (costs stamina)
-  | { kind: 'drive'; to: Vec } // ball handler attacks toward a point
+  | { kind: 'move'; to: Vec; mode: MoveMode } // relocate (jog) or committed sprint (Q13)
+  | { kind: 'cut'; to: Vec } // off-ball hard cut — always sprint (a move/sprint specialization)
+  | { kind: 'drive'; to: Vec } // ball handler attacks — always sprint (carries collision/strip/prime)
   | { kind: 'screen'; to: Vec; markId?: string } // set a pick; with markId, track that defender (a body, not a spot)
   | { kind: 'pass'; toId: string; lead?: Vec } // one-shot pass; lead = aimed catch spot for a cutter
   // defense
@@ -55,13 +61,21 @@ export interface Player {
   pos: Vec
   stamina: number // 0..100
   order: Order
-  /** Beats remaining slowed by a screen (a defender stuck on a pick). */
+  /** Current sprint speed in floor-units/step (Q4 accel ramp), 0 when jogging/
+   *  idle. Serialized so sub-steps replay exactly; read pre-contact as the bull
+   *  momentum term (Q22). Builds while sprinting toward an unchanged target;
+   *  reset by a bail (Q24) and on arrival/stop. */
+  sprintSpeed: number
+  /** Unit heading the current sprint speed was built along, or null when not
+   *  sprinting. Used to price the angle×speed redirect cost on a bail (Q5). */
+  sprintDir: Vec | null
+  /** Steps remaining slowed by a screen (a defender stuck on a pick). */
   stuck: number
-  /** Beats the player has been setting the current screen (frees after ~2). */
+  /** Steps the player has been setting the current screen (frees after a bit). */
   screenHeld: number
-  /** Beats remaining of a post-drive finishing boost on the next shot. */
+  /** Steps remaining of a post-drive finishing boost on the next shot. */
   primed: number
-  /** Beats remaining of a "loose handle" after bulling through a body — the
+  /** Steps remaining of a "loose handle" after bulling through a body — the
    *  driver shoved a man off his spot but exposed the ball (higher strip risk). */
   bull: number
 }
@@ -90,10 +104,10 @@ export interface GameState {
   players: Player[]
   ballHandlerId: string | null // who has the ball
   offense: Side // which side is on offense
-  shotClock: number // beats remaining this possession
+  shotClock: number // STEPS remaining this possession (Q10)
   score: Record<Side, number>
   possession: number // possession counter (animation reset key)
-  beat: number // beat counter within the game
+  step: number // step counter within the game (was `beat`; Q10)
   winTarget: number
   seed: number
   rngState: number
@@ -104,6 +118,6 @@ export interface GameState {
 
 export type Action =
   | { type: 'SET_ORDER'; playerId: string; order: Order }
-  | { type: 'RUN_BEAT' }
+  | { type: 'RUN_STEP' } // advance exactly one step (Q10/Q11)
   | { type: 'CALL_SHOT'; playerId: string }
   | { type: 'NEW_GAME'; seed?: number }

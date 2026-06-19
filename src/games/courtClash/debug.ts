@@ -1,10 +1,10 @@
 import { reachOf } from './geometry'
 import type { Action, GameState, Order } from './types'
 
-/** A compact snapshot of one beat — enough to eyeball positions, stamina,
+/** A compact snapshot of one step — enough to eyeball positions, stamina,
  *  reach and orders without dumping the whole engine. */
 export interface DebugFrame {
-  beat: number
+  step: number
   possession: number
   offense: string
   shotClock: number
@@ -33,6 +33,7 @@ const r1 = (n: number) => Math.round(n * 10) / 10
 function orderLabel(o: Order): string {
   switch (o.kind) {
     case 'move':
+      return `move${o.mode === 'sprint' ? '⚡' : ''}→(${r1(o.to.x)},${r1(o.to.y)})`
     case 'cut':
     case 'drive':
     case 'help':
@@ -52,7 +53,7 @@ function orderLabel(o: Order): string {
 
 export function captureFrame(s: GameState): DebugFrame {
   return {
-    beat: s.beat,
+    step: s.step,
     possession: s.possession,
     offense: s.offense,
     shotClock: s.shotClock,

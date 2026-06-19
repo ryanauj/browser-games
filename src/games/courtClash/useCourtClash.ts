@@ -51,7 +51,7 @@ export function useCourtClash() {
       framesRef.current = []
     }
     framesRef.current.push(captureFrame(state))
-  }, [state.beat, state.possession, state.seed])
+  }, [state.step, state.possession, state.seed])
 
   const record = useCallback((a: Action) => {
     actionsRef.current.push(a)
@@ -71,7 +71,7 @@ export function useCourtClash() {
   const runBeat = useCallback(() => {
     if (state.phase !== 'play' || pulsing) return
     pulse()
-    const a: Action = { type: 'RUN_BEAT' }
+    const a: Action = { type: 'RUN_STEP' }
     record(a)
     dispatch(a)
   }, [state.phase, pulsing, pulse, record])

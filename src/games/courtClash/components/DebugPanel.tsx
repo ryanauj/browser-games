@@ -37,7 +37,7 @@ export function DebugPanel({ getLog, onClose }: { getLog: () => DebugLog; onClos
       <div className="cc-modal__card cc-debug">
         <h2 className="cc-modal__title">Debug log</h2>
         <p className="cc-debug__meta">
-          seed {data.seed} · {data.frames.length} beats · {data.actions.length} actions
+          seed {data.seed} · {data.frames.length} steps · {data.actions.length} actions
         </p>
 
         <div className="cc-debug__actions">
@@ -59,7 +59,7 @@ export function DebugPanel({ getLog, onClose }: { getLog: () => DebugLog; onClos
             <label key={i} className="cc-debug__frame">
               <input type="checkbox" checked={selected.has(i)} onChange={() => toggle(i)} />
               <span className="cc-debug__frame-id">
-                B{f.beat}·P{f.possession}
+                S{f.step}·P{f.possession}
               </span>
               <span className="cc-debug__frame-tag">{f.offense === 'player' ? 'OFF' : 'DEF'}</span>
               <span className="cc-debug__frame-score">

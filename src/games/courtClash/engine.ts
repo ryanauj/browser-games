@@ -1,11 +1,12 @@
 import {
+  ARRIVE_EPS,
   BASKET,
   BLOCK_BASE_PERIMETER,
   BLOCK_BASE_RIM,
   BLOCK_STAT_WEIGHT,
   BULL_STAMINA,
   BULL_STRIP_BONUS,
-  COLLIDE_DRIVE_MOMENTUM,
+  COLLIDE_BULL_MOMENTUM,
   COLLIDE_MASS_STRENGTH,
   COLLIDE_MAX_SHOVE,
   COLLIDE_MOMENTUM_WEIGHT,
@@ -15,12 +16,16 @@ import {
   GAMBLE_STEAL_BASE,
   GAMBLE_STEAL_STAT_WEIGHT,
   GASSED_THRESHOLD,
+  HOLD_EPS,
   LEAD_CATCH_RADIUS,
   OPENNESS_SHOT_WEIGHT,
   OREB_BASE,
   PASS_LANE_RADIUS,
   PASS_STEAL_BASE,
   PASS_STEAL_STAT_WEIGHT,
+  REDIRECT_FREE_ANGLE,
+  REDIRECT_SPEED_LOSS,
+  REDIRECT_STAMINA,
   SCREEN_BASE,
   SCREEN_BODY,
   SCREEN_HOLD_MAX,
@@ -30,8 +35,8 @@ import {
   SET_ANCHOR_BONUS,
   SET_MOTION_REF,
   SHOT_BASE,
-  SHOT_CLOCK_BEATS,
   SHOT_CLOCK_RESET_OREB,
+  SHOT_CLOCK_STEPS,
   SHOT_STAT_WEIGHT,
   SPRINT_FLOOR,
   STALL_KEPT_FRACTION,
@@ -45,6 +50,8 @@ import {
   WIN_TARGET,
 } from './constants'
 import {
+  accelFracOf,
+  angleBetween,
   clampToCourt,
   contestedStep,
   dist,
@@ -56,13 +63,15 @@ import {
   reachOf,
   shotPoints,
   shotType,
+  sprintTopOf,
   stepToward,
   teammates,
+  unitTo,
 } from './geometry'
 import { aiPlan } from './ai'
 import { ARCHETYPES, buildPlayers } from './roster'
 import { nextRandom } from './rng'
-import type { Action, BeatEvent, GameState, Player, Side, Vec } from './types'
+import type { Action, BeatEvent, GameState, Order, Player, Side, Vec } from './types'
 
 // ---------------------------------------------------------------------------
 // Setup
@@ -75,17 +84,17 @@ export function createInitialState(seed: number = Date.now()): GameState {
     players,
     ballHandlerId: null,
     offense: 'player',
-    shotClock: SHOT_CLOCK_BEATS,
+    shotClock: SHOT_CLOCK_STEPS,
     score: { player: 0, ai: 0 },
     possession: 0,
-    beat: 0,
+    step: 0,
     winTarget: WIN_TARGET,
     seed: seed | 0,
     rngState: seed | 0,
     events: [],
     log: ['Tip-off — your ball.'],
   }
-  return setupPossession(base, 'player', SHOT_CLOCK_BEATS, base.log)
+  return setupPossession(base, 'player', SHOT_CLOCK_STEPS, base.log)
 }
 
 /** Position both fives for a fresh possession: offense at home spots, defense
@@ -96,7 +105,16 @@ function setupPossession(
   clock: number,
   log: string[],
 ): GameState {
-  const players = state.players.map((p) => ({ ...p, pos: { ...p.pos }, stuck: 0, screenHeld: 0, primed: 0, bull: 0 }))
+  const players = state.players.map((p) => ({
+    ...p,
+    pos: { ...p.pos },
+    sprintSpeed: 0,
+    sprintDir: null,
+    stuck: 0,
+    screenHeld: 0,
+    primed: 0,
+    bull: 0,
+  }))
   const off = players.filter((p) => p.side === offense)
   const def = players.filter((p) => p.side !== offense)
 
@@ -136,8 +154,26 @@ const clampP = (p: number): number => Math.max(0.03, Math.min(0.97, p))
 const isGassed = (p: Player): boolean => p.stamina < GASSED_THRESHOLD
 const statN = (v: number): number => (v - 50) / 49 // ~[-1,1]
 
-/** Movement orders that complete in a single beat (move there, then idle). */
-const ONE_BEAT_MOVES = new Set(['move', 'cut', 'drive', 'help'])
+/** The movement MODE an order travels at (Q13). Sprint commits a line and builds
+ *  momentum; jog is flat and reactive; null = no travel (idle / one-shot pass).
+ *  `drive`/`cut` are sprint specializations (they carry their own action
+ *  semantics — collision/strip/prime, off-ball cut). Defensive tracking orders
+ *  (guard/double/help/steal) and the screener move at a reactive jog — a
+ *  committed defensive sprint (cut off the spot, Q9) is later AI work (Q25). */
+function moveModeOf(o: Order): 'jog' | 'sprint' | null {
+  switch (o.kind) {
+    case 'idle':
+    case 'pass':
+      return null
+    case 'drive':
+    case 'cut':
+      return 'sprint'
+    case 'move':
+      return o.mode === 'sprint' ? 'sprint' : 'jog'
+    default:
+      return 'jog'
+  }
+}
 
 function pushLog(log: string[], line: string): string[] {
   return [line, ...log].slice(0, 8)
@@ -336,8 +372,10 @@ function driveCollision(
   }
   if (!hit) return { pos: want, bull: false }
 
-  // The shove contest at the body.
-  const driverPush = shoveMass(driver) + COLLIDE_DRIVE_MOMENTUM * len
+  // The shove contest at the body. Momentum = the driver's tracked PRE-contact
+  // sprint speed (Q22) — the Q4 accel ramp flows straight into the hit: a long
+  // committed runway is a heavy bull, a standing/cutting man a light one.
+  const driverPush = shoveMass(driver) + COLLIDE_BULL_MOMENTUM * driver.sprintSpeed
   const setFactor = Math.max(0, Math.min(1, 1 - (defMove.get(hit.id) ?? 0) / SET_MOTION_REF))
   const defAnchor = shoveMass(hit) + SET_ANCHOR_BONUS * setFactor
 
@@ -357,56 +395,102 @@ function driveCollision(
   return { pos: want, bull: true }
 }
 
+/** Floor units a player would travel toward its target THIS step, read purely
+ *  from start-of-step state (so it's order-independent and replay-exact). Sprint
+ *  uses the current tracked speed (pre-ramp) as a proxy. Used only to tell a SET
+ *  defender (anchored, ~0 motion) from one on the move for the bull anchor. */
+function intendedStepLen(p: Player, target: Vec | null): number {
+  if (!target) return 0
+  const mode = moveModeOf(p.order)
+  if (mode === null) return 0
+  let step = mode === 'sprint' ? Math.max(reachOf(p), p.sprintSpeed) : reachOf(p)
+  if (p.stuck > 0) step *= STUCK_FACTOR
+  return dist(p.pos, stepToward(p.pos, target, step))
+}
+
+/** Advance one STEP of motion. Each player moves toward its target then HOLDS on
+ *  arrival (Q12). JOG = flat reach, no momentum (Q4). SPRINT accelerates per step
+ *  along the committed line toward a top speed (Q4 ramp), tracked per-player in
+ *  `sprintSpeed`; bailing onto a new heading pays an angle×speed penalty and
+ *  resets the ramp (Q5/Q24). Continuous per-step collision/separation resolves
+ *  contact every step so the guard-lag and phantom-through bugs can't open up.
+ *  Stamina is per-mode (Q26): jog cheap, sprint drains (∝ speed), a hold recovers,
+ *  plus the Q5 redirect tax on a bail. */
 function applyMovement(players: Player[], ballHandlerId: string | null): { handlerStalled: boolean } {
   const ballHandler = byId(players, ballHandlerId)
   // Opponents setting a screen are solid bodies you must go around, not through.
   const screeners = players.filter((s) => s.order.kind === 'screen')
-  // Where everyone started this beat — the shove resolver reads each body's
-  // momentum (how far, and which way, it drove) from this.
+  // Where everyone started this step — the shove resolver and the drive collision
+  // read each body's start spot from here, so resolution is order-independent.
   const before = new Map(players.map((p) => [p.id, { ...p.pos }]))
-  // How far each player INTENDS to move this beat, from start-of-beat positions
-  // (order-independent). The drive collision reads it to tell a SET defender
-  // (anchored, barely moving) from one on the move.
   const intendedMove = new Map<string, number>()
-  for (const p of players) {
-    const burst = p.order.kind === 'drive' || p.order.kind === 'cut'
-    let step = reachOf(p, burst)
-    if (p.stuck > 0) step *= STUCK_FACTOR
-    const target = targetFor(p, players, ballHandler)
-    intendedMove.set(p.id, target ? dist(p.pos, stepToward(p.pos, target, step)) : 0)
-  }
+  for (const p of players) intendedMove.set(p.id, intendedStepLen(p, targetFor(p, players, ballHandler)))
+
   let handlerStalled = false
   for (const p of players) {
-    // Sprint floor: too gassed to drive/cut — degrade to a jog in place.
-    if ((p.order.kind === 'drive' || p.order.kind === 'cut') && p.stamina < SPRINT_FLOOR) {
-      p.order = { kind: 'idle' }
+    let mode = moveModeOf(p.order)
+    // Sprint floor: too gassed to sprint. A drive/cut collapses to idle (no
+    // explosive verb when spent); a sprint-move degrades to a flat jog.
+    if (mode === 'sprint' && p.stamina < SPRINT_FLOOR) {
+      if (p.order.kind === 'drive' || p.order.kind === 'cut') {
+        p.order = { kind: 'idle' }
+        mode = null
+      } else {
+        mode = 'jog'
+      }
     }
-    const burst = p.order.kind === 'drive' || p.order.kind === 'cut'
-    let step = reachOf(p, burst) // drives/cuts explode past a jog's reach
-    if (p.stuck > 0) step *= STUCK_FACTOR // hung up on a screen (decayed at beat start)
-    // A drive primes a finishing boost on this handler's next shot.
-    if (p.order.kind === 'drive') p.primed = 1
+    if (p.order.kind === 'drive') p.primed = 1 // a drive primes the next shot's finish
+
     const target = targetFor(p, players, ballHandler)
-    if (target) {
+    const heading = target ? unitTo(p.pos, target) : null
+    const arrived = target ? dist(p.pos, target) <= ARRIVE_EPS : true
+
+    // Decide this step's travel distance + update the accel/redirect state.
+    let step = 0
+    let redirectTax = 0
+    if (mode === null || !target || !heading || arrived) {
+      // Idle / one-shot / arrived → HOLD: decelerate to a stop (ramp resets).
+      p.sprintSpeed = 0
+      p.sprintDir = null
+    } else if (mode === 'sprint') {
+      const top = sprintTopOf(p)
+      // Bail cost (Q5 angle×speed): a turn off the committed heading sheds speed
+      // (resets the ramp ∝ turn, Q24) and taxes stamina (∝ angle×speed, Q26).
+      if (p.sprintSpeed > 0 && p.sprintDir) {
+        const ang = angleBetween(p.sprintDir, heading)
+        if (ang > REDIRECT_FREE_ANGLE) {
+          const turn = Math.min(1, ang / Math.PI)
+          redirectTax = REDIRECT_STAMINA * turn * (p.sprintSpeed / top)
+          p.sprintSpeed *= 1 - REDIRECT_SPEED_LOSS * turn
+        }
+      }
+      // (Re)start at no less than a jog, then accelerate toward the top (Q4).
+      const jog = reachOf(p)
+      if (p.sprintSpeed < jog) p.sprintSpeed = jog
+      p.sprintSpeed = Math.min(top, p.sprintSpeed + (top - p.sprintSpeed) * accelFracOf(p))
+      p.sprintDir = { ...heading }
+      step = p.sprintSpeed
+    } else {
+      // Jog: flat, reactive, no momentum (Q4). Re-aiming is free.
+      p.sprintSpeed = 0
+      p.sprintDir = null
+      step = reachOf(p)
+    }
+    if (p.stuck > 0) step *= STUCK_FACTOR // hung up on a screen (decayed at step start)
+
+    if (target && step > 0) {
       const want = stepToward(p.pos, target, step)
       // Can't run through a planted screener — go around (the physical pick).
       const blockers = screeners.filter((s) => s.side !== p.side && s.id !== p.id)
       let next = clampToCourt(blockedStep(p.pos, want, blockers, SCREEN_BODY))
-      // Defenders in your lane SLOW you — no teleporting through (the old bug) and
-      // no hard wall (you can still fight downhill past a man). This models the
-      // DEFENSE taking your ground, so it applies to whoever is attacking it: every
-      // offensive mover (the drive AND off-ball cutters), never the defenders —
-      // slowing a defender who lives in contact with his man would gut the closeout.
       if (p.id === ballHandlerId && p.order.kind === 'drive') {
         // The DRIVER is a solid body meeting solid bodies: bull through (shove the
-        // man off his spot) or get stopped dead — never slip through. Defenders
-        // are read from their start-of-beat spots so the resolution is order-
-        // independent and replays stay exact.
+        // man off his spot, fed by his PRE-contact sprint speed) or get stopped
+        // dead — never slip through. Defenders read from their start-of-step
+        // spots so resolution is order-independent and replays stay exact.
         const bodies = players.filter((o) => o.side !== p.side && o.id !== p.id && o.order.kind !== 'screen')
         const { pos, bull } = driveCollision(p, p.pos, next, bodies, before, intendedMove)
         const settled = clampToCourt(pos)
-        // Stall cue: contact STUFFED the drive (kept under STALL_KEPT_FRACTION of
-        // its ground) — but a clean bull-through that covered its lane stays quiet.
         const intended = dist(p.pos, next)
         const kept = dist(p.pos, settled)
         if (!bull && intended >= STALL_MIN_DRIVE && kept < intended * STALL_KEPT_FRACTION) handlerStalled = true
@@ -418,14 +502,18 @@ function applyMovement(players: Player[], ballHandlerId: string | null): { handl
         next = clampToCourt(contestedStep(p.pos, next, players.filter((o) => o.side !== p.side && o.id !== p.id && o.order.kind !== 'screen'), p.attr.strength))
       }
       p.pos = next
-      // A direct move is one beat: once arrived, drop to idle so the coach
-      // re-orders (and the player recovers) rather than drifting on.
-      if (ONE_BEAT_MOVES.has(p.order.kind) && dist(p.pos, target) < 1.2) p.order = { kind: 'idle' }
     }
-    const cost = STAMINA_COST[p.order.kind] + (p.bull > 0 ? BULL_STAMINA : 0)
+
+    // Stamina (Q26): a step that barely moved recovers like idle; otherwise pay
+    // the mode cost (sprint scaled by current speed) plus any bail tax and bull.
+    const moved = dist(before.get(p.id)!, p.pos)
+    const staKey = moved < HOLD_EPS ? 'idle' : mode === 'sprint' ? 'sprint' : 'jog'
+    let cost = STAMINA_COST[staKey]
+    if (staKey === 'sprint') cost *= p.sprintSpeed / sprintTopOf(p)
+    cost += redirectTax + (p.bull > 0 ? BULL_STAMINA : 0)
     p.stamina = Math.max(0, Math.min(100, p.stamina - cost))
   }
-  // No two bodies end a beat stacked — resolved as a strength/momentum shove.
+  // No two bodies end a step stacked — resolved as a strength/momentum shove.
   separateBodies(players, before)
   return { handlerStalled }
 }
@@ -535,7 +623,7 @@ function resolveShot(state: GameState, shooterId: string): GameState {
   if (blocker && r.roll(blockP)) {
     events.push({ kind: 'block', by: blocker.id, from: shooter.pos, text: `${blocker.name} BLOCKS it!` })
     log = pushLog(log, `🚫 ${blocker.name} rejects ${shooter.name}.`)
-    return setupPossession({ ...state, players, rngState: r.next, events, log }, def, SHOT_CLOCK_BEATS, log)
+    return setupPossession({ ...state, players, rngState: r.next, events, log }, def, SHOT_CLOCK_STEPS, log)
   }
 
   const makeP = shotMakeChance(players, shooter)
@@ -555,7 +643,7 @@ function resolveShot(state: GameState, shooterId: string): GameState {
         winner: off,
       }
     }
-    return setupPossession({ ...state, players, rngState: r.next, score, events, log }, def, SHOT_CLOCK_BEATS, log)
+    return setupPossession({ ...state, players, rngState: r.next, score, events, log }, def, SHOT_CLOCK_STEPS, log)
   }
 
   // Miss → rebound contest.
@@ -581,23 +669,23 @@ function resolveShot(state: GameState, shooterId: string): GameState {
   const grabber = teammates(players, def).reduce((a, b) => (distToRim(a.pos) < distToRim(b.pos) ? a : b))
   events.push({ kind: 'rebound', by: grabber.id, from: BASKET, to: { ...grabber.pos }, text: `${grabber.name} rebounds.` })
   log = pushLog(log, `🔁 ${grabber.name} grabs the board — ${sideName(def)} ball.`)
-  return setupPossession({ ...state, players, rngState: r.next, events, log }, def, SHOT_CLOCK_BEATS, log)
+  return setupPossession({ ...state, players, rngState: r.next, events, log }, def, SHOT_CLOCK_STEPS, log)
 }
 
-/** Advance one beat of motion: decay screen/drive timers, resolve planted
+/** Advance one STEP of motion: decay screen/drive timers, resolve planted
  *  screens, then move every player along their standing order. Mutates players.
- *  Returns whether the ball handler's drive was throttled by traffic this beat. */
+ *  Returns whether the ball handler's drive was throttled by traffic this step. */
 function advanceMotion(players: Player[], ballHandlerId: string | null): { handlerStalled: boolean } {
   for (const p of players) {
     if (p.stuck > 0) p.stuck -= 1
     if (p.primed > 0) p.primed -= 1 // a finishing boost expires if no shot followed
-    p.bull = 0 // loose handle is recomputed each beat by the collision
+    p.bull = 0 // loose handle is recomputed each step by the collision
   }
   resolveScreens(players)
   return applyMovement(players, ballHandlerId)
 }
 
-function runBeat(state: GameState): GameState {
+function runStep(state: GameState): GameState {
   if (state.phase === 'gameover') return state
 
   const players = state.players.map((p) => ({ ...p, pos: { ...p.pos } }))
@@ -606,6 +694,9 @@ function runBeat(state: GameState): GameState {
   let log = state.log
 
   // 1. The CPU floor general sets its five's orders (and may commit to a shot).
+  //    SIMULTANEOUS RESOLUTION (Q16): the AI decides from the REVEALED (last-step)
+  //    positional state only — it never reads the human's order committed this
+  //    step (the placeholder aiPlan reads positions/stamina, not opponent orders).
   //    The opponent's orders persist from the human/standing orders.
   const plan = aiPlan({ ...state, players })
   for (const o of plan.orders) {
@@ -655,7 +746,7 @@ function runBeat(state: GameState): GameState {
           const def = opponentOf(handler.side)
           events.push({ kind: 'turnover', from: handler.pos, to: aim, by: handler.id, text: 'Errant pass' })
           log = pushLog(log, `🟠 ${handler.name} sails it out of reach — ${sideName(def)} ball.`)
-          return setupPossession({ ...state, players, rngState: r.next, events, log }, def, SHOT_CLOCK_BEATS, log)
+          return setupPossession({ ...state, players, rngState: r.next, events, log }, def, SHOT_CLOCK_STEPS, log)
         }
         target.pos = catchPoint
       }
@@ -664,7 +755,7 @@ function runBeat(state: GameState): GameState {
       if (thief && r.roll(stealP)) {
         events.push({ kind: 'steal', by: thief.id, from: handler.pos, to: { ...thief.pos }, text: `${thief.name} steals it!` })
         log = pushLog(log, `🧤 ${thief.name} jumps the lane — steal!`)
-        return setupPossession({ ...state, players, rngState: r.next, events, log }, thief.side, SHOT_CLOCK_BEATS, log)
+        return setupPossession({ ...state, players, rngState: r.next, events, log }, thief.side, SHOT_CLOCK_STEPS, log)
       }
       events.push({ kind: 'pass', from: handler.pos, to: target.pos, by: target.id, text: 'Pass' })
       // Catch and decide: the receiver gathers and goes idle so you (or the CPU)
@@ -686,7 +777,7 @@ function runBeat(state: GameState): GameState {
       if (r.roll(p)) {
         events.push({ kind: 'steal', by: gambler.id, from: handler.pos, to: { ...gambler.pos }, text: `${gambler.name} strips it!` })
         log = pushLog(log, `🧤 ${gambler.name} gambles and gets it!`)
-        return setupPossession({ ...state, players, rngState: r.next, events, log }, gambler.side, SHOT_CLOCK_BEATS, log)
+        return setupPossession({ ...state, players, rngState: r.next, events, log }, gambler.side, SHOT_CLOCK_STEPS, log)
       }
     }
     if (handler.order.kind === 'drive') {
@@ -700,7 +791,7 @@ function runBeat(state: GameState): GameState {
         if (r.roll(p)) {
           events.push({ kind: 'steal', by: onBall.id, from: handler.pos, to: { ...onBall.pos }, text: `${onBall.name} strips the drive!` })
           log = pushLog(log, `🧤 ${onBall.name} strips ${handler.name} on the drive!`)
-          return setupPossession({ ...state, players, rngState: r.next, events, log }, onBall.side, SHOT_CLOCK_BEATS, log)
+          return setupPossession({ ...state, players, rngState: r.next, events, log }, onBall.side, SHOT_CLOCK_STEPS, log)
         }
       }
     }
@@ -716,18 +807,19 @@ function runBeat(state: GameState): GameState {
   return finalizeClock({ ...state, players, rngState: r.next, events, log })
 }
 
-/** Tick the shot clock after a beat's motion + contests have resolved. Motion
- *  already happened this beat (see advanceMotion), so this only advances time. */
+/** Tick the shot clock (in STEPS) after a step's motion + contests have resolved.
+ *  Motion already happened this step (see advanceMotion), so this only advances
+ *  time. */
 function finalizeClock(state: GameState): GameState {
   const shotClock = state.shotClock - 1
-  const beat = state.beat + 1
+  const step = state.step + 1
   if (shotClock <= 0) {
     const def = opponentOf(state.offense)
     const log = pushLog(state.log, `⏱️ Shot-clock violation — ${sideName(def)} ball.`)
     const events: BeatEvent[] = [{ kind: 'shotclock', text: 'Shot-clock violation!' }]
-    return setupPossession({ ...state, players: state.players, beat, events, log }, def, SHOT_CLOCK_BEATS, log)
+    return setupPossession({ ...state, players: state.players, step, events, log }, def, SHOT_CLOCK_STEPS, log)
   }
-  return { ...state, shotClock, beat }
+  return { ...state, shotClock, step }
 }
 
 // ---------------------------------------------------------------------------
@@ -743,12 +835,12 @@ export function reducer(state: GameState, action: Action): GameState {
       )
       return { ...state, players, events: [] }
     }
-    case 'RUN_BEAT':
-      return runBeat(state)
+    case 'RUN_STEP':
+      return runStep(state)
     case 'CALL_SHOT': {
       if (state.phase !== 'play') return state
-      // Let the defense close out one beat before the shot resolves — the same
-      // courtesy the CPU's shots get (which resolve post-movement in runBeat).
+      // Let the defense close out one step before the shot resolves — the same
+      // courtesy the CPU's shots get (which resolve post-movement in runStep).
       // Without this, a human could shoot before any defender recovered. The
       // shooter is planted so they don't drift; we move only (no timer decay) so
       // a fresh drive's finishing boost still counts.

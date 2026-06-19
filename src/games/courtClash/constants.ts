@@ -22,42 +22,81 @@ export const RIM_RADIUS = 14
 export const MAX_SHOT_RANGE = 78
 
 // ---------------------------------------------------------------------------
-// Beats, clock, scoring.
+// Steps, clock, scoring.
+//
+// MOVEMENT REWORK (Q10/Q11): the BEAT is gone as the logical atomic unit — the
+// STEP is now atomic and the shot clock counts steps. One `RUN_STEP` advances
+// exactly one step (turn-based, tap-per-step). A step is ~3.5× finer than the
+// old beat, so a possession is ~40-60 steps; magnitudes below are the old
+// per-beat values divided by ~3.5 to keep pace roughly constant (tuning is a
+// later session — see `pnpm balance`). "Beat" survives only as the render-glide
+// duration (BEAT_MS) and the resolution event bus (BeatEvent), not as time.
 // ---------------------------------------------------------------------------
 
-/** Real time one beat of animation occupies (ms). */
-export const BEAT_MS = 1100
+/** Real time one step of animation occupies (ms). */
+export const BEAT_MS = 420
 
-/** Possession length, counted in beats. Expiry = shot-clock turnover. */
-export const SHOT_CLOCK_BEATS = 13
-/** Shot clock after an offensive rebound. */
-export const SHOT_CLOCK_RESET_OREB = 7
+/** Possession length, counted in STEPS. Expiry = shot-clock turnover. */
+export const SHOT_CLOCK_STEPS = 45
+/** Shot clock (steps) after an offensive rebound. */
+export const SHOT_CLOCK_RESET_OREB = 22
 
 /** First to this many points, win by 2. */
 export const WIN_TARGET = 15
 export const WIN_BY = 2
 
 // ---------------------------------------------------------------------------
-// Movement & stamina.
+// Movement & stamina — jog (flat) + sprint (accel ramp). See engine.applyMovement.
 // ---------------------------------------------------------------------------
 
-/** Base floor units a player covers per beat at full stamina, before speed. */
-export const BASE_STEP = 16
-/** Speed attribute (0..99) adds up to this many extra units per beat. */
-export const SPEED_STEP_BONUS = 12
+/** Base floor units a player covers per STEP at full stamina, before speed.
+ *  This is the flat JOG distance (Q4: jog = flat speed, no momentum). */
+export const BASE_STEP = 5
+/** Speed attribute (0..99) adds up to this many extra units per step to a jog. */
+export const SPEED_STEP_BONUS = 3
 
-/** Stamina drained per beat by exertion level (distance moved scales it). */
+// --- Sprint accel ramp (Q4/Q12/Q13/Q23) -----------------------------------
+// A SPRINT commits a target and accelerates per step toward a top speed along
+// the committed line; the per-player current sprint speed lives in serialized
+// state (`Player.sprintSpeed`). Jog never builds momentum.
+/** Sprint top speed = a player's jog step × this. */
+export const SPRINT_TOP_FACTOR = 1.7
+/** Per committed sprint step, the fraction of the remaining (top − current) gap
+ *  the player closes — the acceleration. Derived from `speed` (Q23: no new attr;
+ *  `speed` becomes athleticism = top speed AND ramp rate). A standing start
+ *  reaches near top in ~1/ACCEL steps. */
+export const ACCEL_BASE = 0.22
+export const ACCEL_SPEED = 0.2 // + up to this from speed → quick-twitch ramps sooner
+
+// --- Redirect cost (Q5 angle×speed) + free re-plan (Q24) -------------------
+// Any player can be re-steered any step (no hard lock). Bailing a sprint onto a
+// new heading pays a penalty that scales with BOTH the turn angle and current
+// speed, and resets the accel ramp. A gentle curve is nearly free; a hard cut at
+// full speed is brutal (a full-speed sprinter is effectively committed).
+/** Fraction of sprint speed shed by a full 180° bail (scaled by the turn angle).
+ *  This is the "resets the accel ramp" term (Q24). */
+export const REDIRECT_SPEED_LOSS = 0.9
+/** Turns gentler than this (radians) are a free sprint curve — no bail cost. */
+export const REDIRECT_FREE_ANGLE = 0.25
+/** Stamina drained by a full-speed 180° bail; scales by angle×speed (Q26: the
+ *  Q5 redirect cost doubles as the stamina tax). */
+export const REDIRECT_STAMINA = 6
+/** Within this distance (floor units) of the target a mover has ARRIVED: it
+ *  holds (Q12, "move to target then hold"), decelerating to a stop (sprint
+ *  speed resets) rather than jittering on the spot. */
+export const ARRIVE_EPS = 1.5
+/** A step that moved less than this counts as a HOLD for stamina (recovers like
+ *  idle — Q26 "idle/slow recovers"), regardless of the standing order. */
+export const HOLD_EPS = 0.6
+
+/** Stamina drained per STEP by movement mode (Q26). Jog is cheap, sprint drains
+ *  (the sprint figure is further scaled by current speed at the call site), a
+ *  hold/idle recovers. The Q5 redirect tax (above) is added on a bail. A `pass`
+ *  is a one-shot resolved before movement (treated as idle). */
 export const STAMINA_COST = {
-  idle: -6, // negative = recover
-  pass: 0, // one-shot, resolved before movement
-  move: 5,
-  cut: 11,
-  drive: 12,
-  screen: 6,
-  guard: 6,
-  double: 10,
-  help: 9,
-  steal: 13,
+  idle: -1.8, // negative = recover (hold / stand)
+  jog: 1.4,
+  sprint: 3.4, // × (sprintSpeed / sprintTop) at the call site
 } as const
 
 /** Below this stamina a player is "gassed": slower and worse at everything. */
@@ -67,13 +106,10 @@ export const GASSED_FACTOR = 0.62
 /** Reach scales continuously with stamina: a fully-drained player still covers
  *  this fraction of their rested reach (100% stamina = full reach). */
 export const STAMINA_REACH_MIN = 0.5
-/** Below this stamina a player cannot sprint (drive/cut) until recovered. */
+/** Below this stamina a player cannot sprint until recovered (degrades to jog). */
 export const SPRINT_FLOOR = 10
-/** Drives and cuts are explosive: they cover this multiple of a jog's reach,
- *  paying the higher stamina cost for the extra ground. */
-export const BURST_FACTOR = 1.4
-/** A ball handler who drove last beat gets this added to their next shot's make
- *  chance — downhill momentum into the finish. Consumed by the shot. */
+/** A ball handler who drove into the finish gets this added to their next shot's
+ *  make chance — downhill momentum into the finish. Consumed by the shot. */
 export const DRIVE_FINISH_BONUS = 0.12
 
 // ---------------------------------------------------------------------------
@@ -83,14 +119,16 @@ export const DRIVE_FINISH_BONUS = 0.12
 
 /** A defender within this distance of a screener gets caught on the pick. */
 export const SCREEN_RADIUS = 10
-/** Base beats a defender is stuck; strength vs the defender's quickness scales it. */
-export const SCREEN_BASE = 1
-export const SCREEN_MAX = 2
+/** Base STEPS a defender is stuck; strength vs the defender's quickness scales it.
+ *  (~old per-beat values × ~3.5 — screens are a deferred action; kept roughly
+ *  equivalent so the placeholder AI's picks still register.) */
+export const SCREEN_BASE = 3
+export const SCREEN_MAX = 6
 export const SCREEN_STAT_WEIGHT = 1.6
 /** A stuck defender moves at this fraction of their step (slowed/screened). */
 export const STUCK_FACTOR = 0.18
-/** A screener is freed (back to idle) after this many beats if it hasn't hit anyone. */
-export const SCREEN_HOLD_MAX = 3
+/** A screener is freed (back to idle) after this many STEPS if it hasn't hit anyone. */
+export const SCREEN_HOLD_MAX = 10
 
 // --- Bodies take up space ---------------------------------------------------
 /** Min distance (floor units) between any two players after a beat resolves — no
@@ -102,7 +140,7 @@ export const SEPARATION_MIN = 3
  *  overlap, the one with more "oomph" holds ground and the other gives way.
  *  Oomph = mass (from strength) + how hard you're moving INTO the contact. */
 export const COLLIDE_MASS_STRENGTH = 0.6 // strength's swing on mass (mass = 1 ± this)
-export const COLLIDE_MOMENTUM_WEIGHT = 0.045 // per floor-unit of step driven into a body
+export const COLLIDE_MOMENTUM_WEIGHT = 0.18 // per floor-unit of step driven into a body (×4 vs the old beat: steps are ~3.5× shorter)
 /** A player setting a screen is a SOLID body: opponents can't move through them,
  *  they must go around (the physical half of a pick). Slightly larger than the
  *  separation gap so the block resolves before separation would. */
@@ -119,19 +157,24 @@ export const SCREEN_BODY = 6
 /** How close (floor units) the drive path must come to a defender's center to
  *  count as body contact — roughly two torsos. */
 export const COLLIDE_RADIUS = 4.5
-/** Per floor-unit of the driver's step, how much momentum adds to his shove
- *  "oomph" in the collision contest (on top of his mass). */
-export const COLLIDE_DRIVE_MOMENTUM = 0.05
-/** A fully SET defender (zero motion this beat) adds this much to his anchor
+/** Momentum → bull coupling (Q22): the driver's shove "oomph" reads his tracked
+ *  PRE-contact sprint speed directly (`k × sprintSpeed`), on top of his mass.
+ *  Replaces the old `COLLIDE_DRIVE_MOMENTUM × stepLen` — a blocked freight-train
+ *  drive has its step clipped by contact, so a post-clip length read momentum
+ *  LOWEST exactly when it should be highest; the tracked speed fixes that. */
+export const COLLIDE_BULL_MOMENTUM = 0.1
+/** A fully SET defender (zero motion this step) adds this much to his anchor
  *  mass — enough that a planted man stuffs an even-strength, full-speed drive,
  *  while a defender on the move gives way. */
 export const SET_ANCHOR_BONUS = 1.1
-/** A defender who moved at least this far this beat counts as fully "on the
- *  move" (no anchor bonus); below it, the bonus ramps in toward SET_ANCHOR_BONUS. */
-export const SET_MOTION_REF = 9
-/** Most a bulled defender is shoved off his spot in one beat — bounded so a
- *  collision can't fling a man across the floor; he recovers (re-plans) next beat. */
-export const COLLIDE_MAX_SHOVE = 5
+/** A defender who moved at least this far this STEP counts as fully "on the
+ *  move" (no anchor bonus); below it, the bonus ramps in toward SET_ANCHOR_BONUS.
+ *  Tuned to one jog step, so a planted (held) defender anchors and a closing one
+ *  does not. */
+export const SET_MOTION_REF = 5
+/** Most a bulled defender is shoved off his spot in one STEP — bounded so a
+ *  collision can't fling a man across the floor; he recovers (re-plans) next step. */
+export const COLLIDE_MAX_SHOVE = 3
 /** Added on-ball strip chance while the handler's handle is loose from a bull
  *  (the cost of bulling, beyond the stamina it burns). */
 export const BULL_STRIP_BONUS = 0.03
@@ -161,9 +204,9 @@ export const MAX_CONTACT_SLOW = 0.75
  *  it — it kept LESS than this fraction of its intended ground. A drive that's
  *  merely slowed (still covers most of the gap) shouldn't cry wolf. */
 export const STALL_KEPT_FRACTION = 0.45
-/** …and only count it a drive worth flagging if it meant to travel this far, so
- *  a short re-position never trips the alarm. */
-export const STALL_MIN_DRIVE = 10
+/** …and only count it a drive worth flagging if it meant to travel this far this
+ *  STEP, so a short re-position never trips the alarm. */
+export const STALL_MIN_DRIVE = 4
 
 /** A driver inside this distance of the rim (and open — i.e. they beat their man)
  *  pulls the nearest help defender over to protect the rim. */

@@ -15,7 +15,9 @@ import { aiPlan } from './ai'
 import type { GameState, Player, Side } from './types'
 
 const GAMES = 60
-const BEAT_CAP = 1200
+// Steps per game cap — a possession is now ~40-60 steps (Q10), ~3.5× the old
+// beat, so the per-game ceiling rises to match.
+const STEP_CAP = 4500
 
 const pct = (n: number, d: number) => (d ? ((n / d) * 100).toFixed(0) : '—')
 const f1 = (n: number) => n.toFixed(1)
@@ -77,7 +79,7 @@ function selfPlayStep(
     for (const o of pplan.orders) s = reducer(s, { type: 'SET_ORDER', playerId: o.playerId, order: o.order })
     if (s.offense === 'player' && pplan.shoot) return reducer(s, { type: 'CALL_SHOT', playerId: pplan.shoot })
   }
-  return reducer(s, { type: 'RUN_BEAT' })
+  return reducer(s, { type: 'RUN_STEP' })
 }
 
 function playGame(seed: number, playerPolicy: 'ai' | 'idle' = 'ai') {
@@ -87,19 +89,19 @@ function playGame(seed: number, playerPolicy: 'ai' | 'idle' = 'ai') {
   // normalized per-possession (raw point totals are skewed by possession count,
   // e.g. an idle side cycles the ball back fast and inflates the opponent's tally).
   const offPoss: Record<Side, Set<number>> = { player: new Set(), ai: new Set() }
-  let beats = 0
-  while (s.phase === 'play' && beats < BEAT_CAP) {
+  let steps = 0
+  while (s.phase === 'play' && steps < STEP_CAP) {
     const offense = s.offense
     offPoss[offense].add(s.possession)
     s = selfPlayStep(s, playerPolicy)
-    note(by[offense], s) // attribute this beat's events to whoever had the ball
-    beats++
+    note(by[offense], s) // attribute this step's events to whoever had the ball
+    steps++
   }
   const minSta = Math.min(...s.players.map((p) => p.stamina))
   const avgSta = s.players.reduce((a, p) => a + p.stamina, 0) / s.players.length
   return {
     by,
-    beats,
+    steps,
     score: s.score,
     possessions: s.possession,
     offPoss: { player: offPoss.player.size, ai: offPoss.ai.size },
@@ -127,7 +129,7 @@ function main() {
   const agg = emptyTally()
   let pts = 0
   let poss = 0
-  let beatsTot = 0
+  let stepsTot = 0
   let minStaTot = 0
   let avgStaTot = 0
   for (let i = 0; i < GAMES; i++) {
@@ -138,7 +140,7 @@ function main() {
     }
     pts += g.score.player + g.score.ai
     poss += g.possessions
-    beatsTot += g.beats
+    stepsTot += g.steps
     minStaTot += g.minSta
     avgStaTot += g.avgSta
   }
@@ -149,7 +151,7 @@ function main() {
   )
   console.log(`  3PA share=${pct(agg.three, agg.shots)}%  3P%=${pct(agg.threeMakes, agg.threeShots)}`)
   console.log(`  per game:  steals ${f1(agg.steals / GAMES)}  blocks ${f1(agg.blocks / GAMES)}  shot-clock TOs ${f1(agg.clockTOs / GAMES)}`)
-  console.log(`  pace:  ${f1(beatsTot / GAMES)} beats/game,  ${f1(poss / GAMES)} possessions,  ${f1(pts / poss)} pts/possession`)
+  console.log(`  pace:  ${f1(stepsTot / GAMES)} steps/game,  ${f1(poss / GAMES)} possessions,  ${f1(pts / poss)} pts/possession`)
   console.log(`  stamina at game end:  avg ${f1(avgStaTot / GAMES)}  min ${f1(minStaTot / GAMES)}`)
 
   // --- Does player defense change AI scoring? guarding (CPU) vs idle, same seeds ---
