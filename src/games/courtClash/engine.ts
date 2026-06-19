@@ -337,10 +337,14 @@ function separateBodies(players: Player[], before: Map<string, Vec>): void {
  *  bug). The contest is the driver's mass + the momentum he's carrying into the
  *  hit vs the defender's anchor; a SET defender (one who barely moved this beat)
  *  holds far harder, so a planted man can stuff an even-strength, full-speed
- *  drive while a defender on the move gives way. Mutates the bulled defender's
- *  position (bounded by COLLIDE_MAX_SHOVE, recovered when he re-plans next beat).
- *  `defMove` maps each defender id to how far it intends to move this beat.
- *  Returns where the driver ends up and whether he bulled (loose handle). */
+ *  drive while a defender on the move gives way. Does NOT mutate the defender:
+ *  it RETURNS the shove (id + displacement, bounded by COLLIDE_MAX_SHOVE) so the
+ *  two-phase resolver applies it on TOP of the defender's own planned jog — the
+ *  jog is kept regardless of ball side (the order-independence fix; the old
+ *  in-loop mutation overwrote the jog when the defender was iterated before the
+ *  driver, i.e. AI-on-offense). `defMove` maps each defender id to how far it
+ *  intends to move this step. Returns where the driver ends up, whether he
+ *  bulled (loose handle), and the shove to apply (null if stopped / path clear). */
 function driveCollision(
   driver: Player,
   from: Vec,
@@ -348,11 +352,11 @@ function driveCollision(
   defenders: Player[],
   defStart: Map<string, Vec>,
   defMove: Map<string, number>,
-): { pos: Vec; bull: boolean } {
+): { pos: Vec; bull: boolean; shove: { id: string; vec: Vec } | null } {
   const dx = want.x - from.x
   const dy = want.y - from.y
   const len = Math.hypot(dx, dy)
-  if (len < 1e-9) return { pos: want, bull: false }
+  if (len < 1e-9) return { pos: want, bull: false, shove: null }
   const ux = dx / len
   const uy = dy / len
   // Earliest body the straight path enters (ray vs a COLLIDE_RADIUS disc).
@@ -370,7 +374,7 @@ function driveCollision(
       hit = d
     }
   }
-  if (!hit) return { pos: want, bull: false }
+  if (!hit) return { pos: want, bull: false, shove: null }
 
   // The shove contest at the body. Momentum = the driver's tracked PRE-contact
   // sprint speed (Q22) — the Q4 accel ramp flows straight into the hit: a long
@@ -382,17 +386,18 @@ function driveCollision(
   if (driverPush <= defAnchor) {
     // STOPPED: pull up just shy of the body — no phantom through.
     const stop = Math.max(0, hitT - 0.1)
-    return { pos: { x: from.x + ux * stop, y: from.y + uy * stop }, bull: false }
+    return { pos: { x: from.x + ux * stop, y: from.y + uy * stop }, bull: false, shove: null }
   }
 
   // BULL THROUGH: the driver carries to his spot and knocks the man off his.
   // Shove the defender along the contact normal (the way the drive is going),
-  // scaled by how decisively the drive won, capped so no one gets launched.
+  // scaled by how decisively the drive won, capped so no one gets launched. The
+  // shove is returned as a DISPLACEMENT (not written to defStart+shove): the
+  // resolver adds it to the defender's own planned jog, so his jog survives the
+  // hit no matter which side iterated first.
   const margin = Math.min(1, (driverPush - defAnchor) / Math.max(0.5, defAnchor))
   const shove = COLLIDE_MAX_SHOVE * (0.5 + 0.5 * margin)
-  const dp = defStart.get(hit.id) ?? hit.pos
-  hit.pos = clampToCourt({ x: dp.x + ux * shove, y: dp.y + uy * shove })
-  return { pos: want, bull: true }
+  return { pos: want, bull: true, shove: { id: hit.id, vec: { x: ux * shove, y: uy * shove } } }
 }
 
 /** Floor units a player would travel toward its target THIS step, read purely
@@ -408,25 +413,52 @@ function intendedStepLen(p: Player, target: Vec | null): number {
   return dist(p.pos, stepToward(p.pos, target, step))
 }
 
-/** Advance one STEP of motion. Each player moves toward its target then HOLDS on
- *  arrival (Q12). JOG = flat reach, no momentum (Q4). SPRINT accelerates per step
- *  along the committed line toward a top speed (Q4 ramp), tracked per-player in
- *  `sprintSpeed`; bailing onto a new heading pays an angle×speed penalty and
- *  resets the ramp (Q5/Q24). Continuous per-step collision/separation resolves
- *  contact every step so the guard-lag and phantom-through bugs can't open up.
- *  Stamina is per-mode (Q26): jog cheap, sprint drains (∝ speed), a hold recovers,
- *  plus the Q5 redirect tax on a bail. */
-function applyMovement(players: Player[], ballHandlerId: string | null): { handlerStalled: boolean } {
+/** Advance one STEP of motion, in TWO PHASES so the result is order-independent
+ *  — it can't depend on array iteration order or which side holds the ball (so
+ *  the Q16/Q25 simultaneous rollout can trust it):
+ *
+ *    PHASE 1 — PLAN. From the start-of-step snapshot (`before`), compute every
+ *      player's intended next position (accel/jog/redirect per Q4/Q5) reading
+ *      ONLY `before`. No position is committed here, so every target/heading is
+ *      read off the revealed (last-step) state — a built-in 1-step read lag,
+ *      consistent with Q16's simultaneous resolution.
+ *    PHASE 2 — RESOLVE. Resolve contacts (the driver's bull-shove, off-ball
+ *      `contestedStep` slow-down) against that planned buffer, still reading
+ *      every OTHER body from `before` (nothing is committed until the phase ends).
+ *      A bulled defender's shove is applied ON TOP of his own planned jog, so his
+ *      jog is kept whether the driver or the defender came first in the array —
+ *      the home-side asymmetry the old single-pass loop had (jog compounded when
+ *      the player drove, discarded when the AI drove) is gone.
+ *
+ *  TIE-BREAK (two players contesting the same spot): movers plan independently
+ *  from `before`, so two can plan into the same cell; the overlap is then broken
+ *  by `separateBodies`, which iterates the FIXED roster order [player-0..4,
+ *  ai-0..4] with the strength+momentum shove math and a fixed +x axis for exactly
+ *  coincident bodies. That order is the same regardless of which side is on
+ *  offense, so the same configuration resolves identically on either ball-side.
+ *
+ *  JOG = flat reach, no momentum (Q4). SPRINT accelerates per step toward a top
+ *  speed (Q4 ramp, tracked in `sprintSpeed`); bailing onto a new heading pays an
+ *  angle×speed penalty and resets the ramp (Q5/Q24). Stamina is per-mode (Q26):
+ *  jog cheap, sprint drains (∝ speed), a hold recovers, plus the Q5 bail tax. */
+export function applyMovement(players: Player[], ballHandlerId: string | null): { handlerStalled: boolean } {
   const ballHandler = byId(players, ballHandlerId)
   // Opponents setting a screen are solid bodies you must go around, not through.
   const screeners = players.filter((s) => s.order.kind === 'screen')
-  // Where everyone started this step — the shove resolver and the drive collision
-  // read each body's start spot from here, so resolution is order-independent.
+  // Start-of-step snapshot. EVERY read below — targets, screener bodies, the bull
+  // ray, the off-ball contest — comes from `before`; no player's position is
+  // committed until the whole step is resolved, so nothing depends on iteration
+  // order or ball-side. (During both phases each `p.pos` still equals `before`.)
   const before = new Map(players.map((p) => [p.id, { ...p.pos }]))
   const intendedMove = new Map<string, number>()
   for (const p of players) intendedMove.set(p.id, intendedStepLen(p, targetFor(p, players, ballHandler)))
 
-  let handlerStalled = false
+  // ---- PHASE 1: PLAN. Intended next position + the stamina mode/bail-tax to
+  //      charge, per player, all from `before`. Mutates only per-player movement
+  //      STATE (sprintSpeed/sprintDir/order/primed) — never a position.
+  const planned = new Map<string, Vec>()
+  const planMode = new Map<string, 'jog' | 'sprint' | null>()
+  const planTax = new Map<string, number>()
   for (const p of players) {
     let mode = moveModeOf(p.order)
     // Sprint floor: too gassed to sprint. A drive/cut collapses to idle (no
@@ -478,42 +510,75 @@ function applyMovement(players: Player[], ballHandlerId: string | null): { handl
     }
     if (p.stuck > 0) step *= STUCK_FACTOR // hung up on a screen (decayed at step start)
 
+    let want = { ...before.get(p.id)! } // no travel → hold at the start-of-step spot
     if (target && step > 0) {
-      const want = stepToward(p.pos, target, step)
+      const raw = stepToward(p.pos, target, step)
       // Can't run through a planted screener — go around (the physical pick).
       const blockers = screeners.filter((s) => s.side !== p.side && s.id !== p.id)
-      let next = clampToCourt(blockedStep(p.pos, want, blockers, SCREEN_BODY))
-      if (p.id === ballHandlerId && p.order.kind === 'drive') {
-        // The DRIVER is a solid body meeting solid bodies: bull through (shove the
-        // man off his spot, fed by his PRE-contact sprint speed) or get stopped
-        // dead — never slip through. Defenders read from their start-of-step
-        // spots so resolution is order-independent and replays stay exact.
-        const bodies = players.filter((o) => o.side !== p.side && o.id !== p.id && o.order.kind !== 'screen')
-        const { pos, bull } = driveCollision(p, p.pos, next, bodies, before, intendedMove)
-        const settled = clampToCourt(pos)
-        const intended = dist(p.pos, next)
-        const kept = dist(p.pos, settled)
-        if (!bull && intended >= STALL_MIN_DRIVE && kept < intended * STALL_KEPT_FRACTION) handlerStalled = true
-        if (bull) p.bull = 1 // loose handle (strip risk) + extra legs, charged below
-        next = settled
-      } else if (ballHandler && p.side === ballHandler.side) {
-        // Off-ball offensive movers (cutters, relocations) are merely SLOWED by
-        // bodies in their lane — they don't bull, and they don't tunnel through.
-        next = clampToCourt(contestedStep(p.pos, next, players.filter((o) => o.side !== p.side && o.id !== p.id && o.order.kind !== 'screen'), p.attr.strength))
-      }
-      p.pos = next
+      want = clampToCourt(blockedStep(p.pos, raw, blockers, SCREEN_BODY))
     }
+    planned.set(p.id, want)
+    planMode.set(p.id, mode)
+    planTax.set(p.id, redirectTax)
+  }
 
-    // Stamina (Q26): a step that barely moved recovers like idle; otherwise pay
-    // the mode cost (sprint scaled by current speed) plus any bail tax and bull.
+  // ---- PHASE 2: RESOLVE. Contacts against the planned buffer, every other body
+  //      still read from `before`. Driver bulls/stops; off-ball movers are slowed
+  //      by bodies in their lane. Bull shoves are recorded, then applied AFTER on
+  //      top of the bulled defender's own planned jog (kept on either ball-side).
+  const resolved = new Map<string, Vec>()
+  const shoves: { id: string; vec: Vec }[] = []
+  let handlerStalled = false
+  for (const p of players) {
+    const want = planned.get(p.id)!
+    let next = want
+    if (p.id === ballHandlerId && p.order.kind === 'drive') {
+      // The DRIVER is a solid body meeting solid bodies: bull through (shove the
+      // man off his spot, fed by his PRE-contact sprint speed) or get stopped
+      // dead — never slip through. Defenders read from `before` (their start-of-
+      // step spots) so resolution is order-independent and replays stay exact.
+      const bodies = players.filter((o) => o.side !== p.side && o.id !== p.id && o.order.kind !== 'screen')
+      const { pos, bull, shove } = driveCollision(p, before.get(p.id)!, want, bodies, before, intendedMove)
+      const settled = clampToCourt(pos)
+      const intended = dist(before.get(p.id)!, want)
+      const kept = dist(before.get(p.id)!, settled)
+      if (!bull && intended >= STALL_MIN_DRIVE && kept < intended * STALL_KEPT_FRACTION) handlerStalled = true
+      if (bull) p.bull = 1 // loose handle (strip risk) + extra legs, charged below
+      if (shove) shoves.push(shove)
+      next = settled
+    } else if (ballHandler && p.side === ballHandler.side) {
+      // Off-ball offensive movers (cutters, relocations) are merely SLOWED by
+      // bodies in their lane — they don't bull, and they don't tunnel through.
+      // Opponent bodies are read from `before` (each `o.pos` still equals its
+      // start-of-step spot here), so a later-iterated mover sees the SAME floor an
+      // earlier one does — the old live-position read (engine bug) is gone.
+      const bodies = players.filter((o) => o.side !== p.side && o.id !== p.id && o.order.kind !== 'screen')
+      next = clampToCourt(contestedStep(before.get(p.id)!, want, bodies, p.attr.strength))
+    }
+    resolved.set(p.id, next)
+  }
+  // Apply each bull shove on top of the bulled defender's resolved (planned-jog)
+  // spot — additive, so his jog survives the hit no matter the iteration order.
+  for (const { id, vec } of shoves) {
+    const r = resolved.get(id)!
+    resolved.set(id, clampToCourt({ x: r.x + vec.x, y: r.y + vec.y }))
+  }
+  // Commit positions — only now, after every read above saw `before`.
+  for (const p of players) p.pos = resolved.get(p.id)!
+
+  // Stamina (Q26): a step that barely moved recovers like idle; otherwise pay the
+  // mode cost (sprint scaled by current speed) plus any bail tax and bull.
+  for (const p of players) {
     const moved = dist(before.get(p.id)!, p.pos)
+    const mode = planMode.get(p.id)
     const staKey = moved < HOLD_EPS ? 'idle' : mode === 'sprint' ? 'sprint' : 'jog'
     let cost = STAMINA_COST[staKey]
     if (staKey === 'sprint') cost *= p.sprintSpeed / sprintTopOf(p)
-    cost += redirectTax + (p.bull > 0 ? BULL_STAMINA : 0)
+    cost += (planTax.get(p.id) ?? 0) + (p.bull > 0 ? BULL_STAMINA : 0)
     p.stamina = Math.max(0, Math.min(100, p.stamina - cost))
   }
-  // No two bodies end a step stacked — resolved as a strength/momentum shove.
+  // No two bodies end a step stacked — resolved as a strength/momentum shove in
+  // the fixed roster order (the documented, side-symmetric tie-break above).
   separateBodies(players, before)
   return { handlerStalled }
 }

@@ -573,6 +573,49 @@ here in the same format so they can be swapped later.
 - **Tax any speed loss** — would also bite a straight stop; over-penalizes and
   muddies the "commit a *line*" reading. Set aside.
 
+### Q30 — How is per-step resolution made ORDER-INDEPENDENT (not just deterministic)?
+**[CHOSEN: two-phase plan→resolve from the start-of-step snapshot, with a fixed-roster-order tie-break]**
+- The Session-1 checkpoint found resolution was **deterministic but NOT
+  order-independent**: `applyMovement` ran ONE pass over the fixed roster
+  `[player-0..4, ai-0..4]`, so two contacts leaked iteration order. (1)
+  `driveCollision` *overwrote* a bulled defender to `defStart + shove`, so the
+  defender's own jog was **compounded** when the player drove (driver iterated
+  first) but **discarded** when the AI drove (defender iterated first) — a
+  home-side asymmetry from identical inputs. (2) Off-ball `contestedStep` read
+  **live** (already-moved) opponent positions, so a later-iterated mover saw
+  bodies an earlier one didn't. Q16/Q25 (simultaneous rollout AI) needs this to
+  be ball-side-symmetric to trust the sim.
+- **Two-phase plan→resolve (chosen).** Split `applyMovement` into **PLAN** —
+  from the `before` snapshot, compute every player's intended next position
+  (accel/jog/redirect per Q4/Q5) reading ONLY `before`, committing no position —
+  then **RESOLVE** — resolve contacts (bull-shove, `contestedStep` slow-down)
+  against that buffer, every other body still read from `before`. A bull shove is
+  *returned* and applied **additively on top of** the bulled defender's own
+  planned jog, so the jog survives regardless of who iterated first. Because
+  nothing commits until both phases finish, every target/heading/contact reads
+  the revealed (last-step) state — a built-in 1-step read lag, exactly Q16. Net:
+  the bulled-defender outcome is now identical on either ball-side (probe
+  `probe-orderdep.ts`: |Δ|=0 across seeds; before, |Δx|≈7.4). The player-on-
+  offense bull path keeps its shove-then-jog intent (jog kept); only the AI-on-
+  offense path is corrected (jog no longer discarded). Replay bytes legitimately
+  shift (AI-on-offense plays out differently); the determinism gate stays GREEN.
+- **Tie-break when two players contest the same spot:** movers plan
+  independently from `before`, so two can plan into the same cell; the overlap is
+  broken by `separateBodies`, which iterates the **fixed roster order
+  `[player-0..4, ai-0..4]`** with the strength+momentum shove math and a **fixed
+  `+x` axis for exactly-coincident bodies**. That order does not depend on which
+  side holds the ball, so the same configuration resolves identically on either
+  ball-side (side-symmetric).
+- **Role-based resolution order (offense resolves first, then defense reacts to
+  the offense's resolved spots)** — would also be order-independent and would
+  keep player-on-offense byte-identical, BUT it grants the defender a 0-step
+  in-step *peek* at the offense's new position, contradicting Q16's 1-step read
+  lag. Set aside (the plan→resolve-from-`before` design is the Q16-faithful one).
+- **Keep the single pass, just fix the overwrite (add jog to shove in place)** —
+  patches defect (1) but not (2) (`contestedStep` still reads live), and still
+  leaves the result coupled to array order in mixed pile-ups. Set aside as a
+  half-measure.
+
 ## Variation ideas to try later (compare/combine)
 
 - Accel ramp (Q4) **+** engine-internal chaining (Q3 alt) as a low-risk first
