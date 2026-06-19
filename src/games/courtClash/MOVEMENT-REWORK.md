@@ -373,9 +373,27 @@ only your own orders; you read the opponent from motion.
   radius; coarse, and reintroduces the soft auto-glue Q6 deliberately dropped.
   Set aside.
 
+### Q22 — Momentum → bull coupling (how `driveCollision` gets the momentum term)?
+**[CHOSEN: read the current (pre-contact) sprint speed directly]**
+- Q4 already declared **bull power = current speed**; this implements it. Today
+  `driveCollision` (`engine.ts:340`) uses
+  `shoveMass(driver) + COLLIDE_DRIVE_MOMENTUM × len` (beat step length).
+- **Read current speed directly (chosen)** — momentum term = `k × currentSpeed`,
+  taken from the player's tracked sprint speed **before** the collision clips the
+  step. One source of truth: the Q4 accel ramp flows straight into contact (long
+  runway ⇒ heavy hit, standing/cutting man ⇒ light). Using the **pre-contact**
+  speed fixes a latent underread — a blocked freight-train drive has its step
+  *shortened* by the collision, so a post-clip `len` would read momentum *lowest*
+  exactly when it should read highest. Needs speed as tracked per-player state
+  (the accel model needs it anyway); retune `k` (replaces `COLLIDE_DRIVE_MOMENTUM`).
+- **Keep the `stepLen` proxy** — `COLLIDE_DRIVE_MOMENTUM × stepLen`; ≈ speed in a
+  step model and needs no new dependency, but inherits the post-clip underread
+  unless carefully fed the *intended* pre-collision length (then it's just a
+  clunkier proxy for speed). Set aside.
+- **Decouple: bull power from committed straight-step count, not instantaneous
+  speed** — abstract, and contradicts Q4. Set aside.
+
 ## Open decisions (not yet made)
-- **Momentum → bull coupling** — does `driveCollision` read current speed
-  directly as the momentum term (replacing `COLLIDE_DRIVE_MOMENTUM × stepLen`)?
 - **Acceleration attribute** — new attr vs derive from existing `speed`/a new
   `agility`. Affects roster, UI badges, balance.
 - **Replan / interrupt model** — re-plan any beat (cost on bail) vs commit
