@@ -477,9 +477,31 @@ only your own orders; you read the opponent from motion.
   legal, and its cheap form is just a richer intent-selector (it collapses into
   this option, not a rival architecture).
 
+### Q26 — Stamina economy shape for the step model?
+**[CHOSEN: per-step mode cost + Q5 redirect tax + recover-when-slow; magnitudes deferred to `pnpm balance`]**
+- `STAMINA_COST` is per-**beat** by exertion kind (`idle -6, move 5, cut 11,
+  drive 12, …`). Q10 deletes beats and the discrete cut/drive verbs; movement is
+  continuous jog/sprint per step plus new continuous taxes (Q5 redirect, accel).
+  Q2's payoff *depends* on a continuous reaction tax tiring a mirroring defender.
+  Worry: now everyone reacts continuously, so magnitudes could gas the floor.
+- **Per-step mode + Q5 tax (chosen)** — port `STAMINA_COST` from beat-kind to
+  **step-mode**: jog ≈ cheap, **sprint drains** (scaled by speed/accel), idle/slow
+  **recovers**; the **Q5 redirect cost doubles as the stamina tax** — that *is*
+  the reaction tax. Right gradient falls out for free: mirroring a *jogging*
+  handler is low-speed ⇒ low angle×speed ⇒ cheap (consistent with Q21 deferring
+  the jog-smother); mirroring a *sprinter* forces sprint+redirect ⇒ expensive ⇒
+  the mirror tires and surrenders a step (Q2). Decide the **shape** now; **defer
+  magnitudes** to `pnpm balance` once a step sim exists (can't calibrate a sim
+  that isn't built — watch the stamina avg/min line).
+- **Continuous work model (drain ∝ speed²/work)** — super-linear; sustained
+  sprints gas you, fewer per-kind constants, more self-balancing — but a bigger
+  departure, harder to map to existing targets, swingier sprint pacing. Set aside
+  (a possible later variation).
+- **Defer entirely (placeholder costs)** — decide nothing until the engine runs.
+  Honest but punts the structural what's-taxed/recover-when question we can settle
+  now. Set aside.
+
 ## Open decisions (not yet made)
-- **Stamina economy** — recalibrate costs for continuous reaction taxes so games
-  don't gas everyone (watch `pnpm balance` stamina line).
 - **Validation gates** — keep the guardrails: shot mix (rim finishes alive),
   defense-matters %, steals ~4, pace ~30 poss, deterministic replays.
 
