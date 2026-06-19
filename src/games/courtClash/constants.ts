@@ -224,6 +224,42 @@ export const HELP_PAINT_RADIUS = 24
 export const LEAD_CATCH_RADIUS = 7
 
 // ---------------------------------------------------------------------------
+// Traveling ball (Q18/Q31). A pass launches the ball as an entity that moves a
+// set distance per STEP toward its target; a defender whose body falls in the
+// travel lane picks it off (positional, Q32 — no dice). See engine.advanceFlight.
+// ---------------------------------------------------------------------------
+
+/** Floor units the ball travels per STEP, base + a passer's `passing` bonus — far
+ *  faster than a player runs, so a pass completes in ~2-3 steps. */
+export const PASS_SPEED_BASE = 14
+export const PASS_SPEED_PASSING = 6
+/** A defender whose body is within this of the ball's travel segment (and in its
+ *  path) intercepts it (Q32). Just over the AI's own lane-clear threshold (~2.2)
+ *  so the placeholder AI threads clean passes, but a man left in the lane in human
+ *  play picks it off — steals become a positional read, not a roll. */
+export const PASS_INTERCEPT_RADIUS = 2.8
+/** The ball is gathered once it comes within this of the receiver (a direct pass
+ *  homes onto them, so this is the catch radius). */
+export const PASS_CATCH_RADIUS = 4
+/** A ball still in flight after this many steps is an errant pass (turnover) — a
+ *  safety net so a ball can never loop forever (it should arrive far sooner). */
+export const PASS_MAX_STEPS = 12
+
+// ---------------------------------------------------------------------------
+// Gather → release shot (Q17/Q33). A shot is a short windup the defense can
+// contest during; make%/block are read at release. See engine.runStep gather.
+// ---------------------------------------------------------------------------
+
+/** Steps a shot gathers before it releases, before the quick-release relief. */
+export const GATHER_BASE = 3
+/** A high-`shooting` shooter trims up to this many steps off the gather (quicker
+ *  release) — rounded, then clamped to GATHER_MIN. */
+export const GATHER_RELIEF = 1
+/** Floor on the gather: even a pure shooter takes this many windup steps, so the
+ *  defense always gets at least one closeout step. */
+export const GATHER_MIN = 2
+
+// ---------------------------------------------------------------------------
 // Contest model. Openness dominates; stat deltas swing it; randomness seasons.
 // All probabilities are clamped to [0.03, 0.97].
 // ---------------------------------------------------------------------------
