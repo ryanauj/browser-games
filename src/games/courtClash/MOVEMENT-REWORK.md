@@ -695,6 +695,17 @@ gather→release shot (Q17). Same format so they can be swapped later.
     instantly; the action surface is unchanged (the UI still dispatches
     `CALL_SHOT`), only its timing. Telegraphing the gather in the UI is a later
     (Q14/Q15) session.
+  - **⚠️ Worth testing later — rim finishes are block-heavy under the gather.**
+    The windup lets the rim protector fully collapse before release, so layups at
+    the rim resolve almost entirely as *blocks* (in self-play `pnpm balance` the
+    layup shot-mix share reads ~0% — they're attempted, just contested, and a
+    `block` event isn't counted as a shot). Threes/twos look healthy (~85/15,
+    1.0 pts/poss); only the rim-finish path is over-deterred. Left as-is this
+    session (determinism is the gate; balance is advisory/deferred) — the
+    balance/tuning session should test softening the closeout-during-windup
+    (shorter gather near the rim, a quick-finish for `primed` drives, or a
+    release-window where a late-arriving contest can't fully smother) so downhill
+    finishes score at a sane rate.
 
 ### Q28 (revisited) — verb reconciliation under the step+actions model
 The `Order` union's **verb surface is unchanged** this session (drive/cut/move/
