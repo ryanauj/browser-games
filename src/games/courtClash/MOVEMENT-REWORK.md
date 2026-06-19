@@ -341,6 +341,38 @@ only your own orders; you read the opponent from motion.
   handle exposure), risking a reach-in foul on a miss. Revisit after the
   positional model is playing.
 
+## Tuning / model decisions (resolved from the open list)
+
+### Q21 — Defender reaction cap (how tightly can a reacting jog defender mirror)?
+**[CHOSEN: structural caps only for now — defer an explicit cap; revisit after playtesting]**
+- From-behind sprints are already capped structurally: a reactor can't exceed
+  **jog speed** (so a built-up sprint separates, Q9) and **simultaneous resolution
+  gives a built-in 1-step read lag** (Q16). The only *unaddressed* case is
+  **jog-vs-jog half-court**, where a reactor re-aiming every micro-step could
+  mirror almost perfectly (1-step lag only) and smother the gather-room a quality
+  look needs → risk of pushing offense back to heaves.
+- **Structural-only (chosen, for now)** — rely on the jog ceiling + 1-step lag
+  alone; no new knob. Rationale: we're *assuming* the half-court smother is a
+  problem without evidence. Don't add a knob to fix an unobserved failure. **Flag
+  to revisit after playtesting** — if reactive D proves over-sticky in the
+  half-court, adopt the slide-speed cap below.
+- **Slide-speed cap** *(documented fallback)* — a defender who is *reacting*
+  (re-aiming off the revealed state) moves at a reduced react/slide speed, esp.
+  laterally, so the side that commits a straight line first wins a sliver of
+  ground each step (commitment stays readable/telegraphed). One knob (slide
+  factor); basketball-true ("you slide slower than you run"); composes with the
+  Q5 angle×speed redirect cost (which only bites at speed — this fills the
+  jog-regime gap). Makes the offensive counter explicit: commit + change
+  direction to break a mirror. **This is the first thing to try if playtest shows
+  over-sticky D.**
+- **Stat-gated mirror** — cap scales with `perimeterD`/`speed`; elite D sticky,
+  weak D lags. Most roster expression, most knobs, biggest balance risk. Can
+  layer *on top* of the slide-speed cap later (let `perimeterD` modulate the
+  slide factor) without re-opening the core.
+- **Reaction-radius gate** — defender only glues/contests within a reaction
+  radius; coarse, and reintroduces the soft auto-glue Q6 deliberately dropped.
+  Set aside.
+
 ## Open decisions (not yet made)
 - **Momentum → bull coupling** — does `driveCollision` read current speed
   directly as the momentum term (replacing `COLLIDE_DRIVE_MOMENTUM × stepLen`)?
@@ -348,9 +380,6 @@ only your own orders; you read the opponent from motion.
   `agility`. Affects roster, UI badges, balance.
 - **Replan / interrupt model** — re-plan any beat (cost on bail) vs commit
   windows vs free re-plan (momentum just resets).
-- **Defender reaction cap** — can a reactor perfectly mirror, or only within a
-  reaction radius / speed? Prevents over-sticky D (the risk that re-attaching
-  defenders smother drives and push the offense back to heaves).
 - **AI route planner** — how the CPU plans/adjusts routes for 5 men each side,
   staying pure & cheap.
 - **Stamina economy** — recalibrate costs for continuous reaction taxes so games
