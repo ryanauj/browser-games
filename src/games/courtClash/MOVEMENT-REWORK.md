@@ -616,6 +616,96 @@ here in the same format so they can be swapped later.
   leaves the result coupled to array order in mixed pile-ups. Set aside as a
   half-measure.
 
+## Implementation-clarification decisions (logged during Session 2 — actions: ball + shots)
+
+Built on the merged step engine (Q30 two-phase resolve, determinism GREEN). This
+session lands the traveling-ball entity (Q18), passing as that entity, and the
+gather→release shot (Q17). Same format so they can be swapped later.
+
+### Q31 — Concrete traveling-ball entity shape (the frozen Q18 contract UI/AI build on)
+**[CHOSEN: an additive `GameState.ball: Ball | null`; while it exists `ballHandlerId` is null]**
+- The blocker for UI/AI was a *documented* entity shape. Committed FIRST, before
+  any behavior, so screens/AI sessions can target it. The shape (see `types.ts`
+  `Ball`): `{ pos, vel, from, fromId, targetId: string|null, to, kind:
+  'pass'|'shot', lead: boolean, steps }`. All serialized → an in-flight pass
+  replays byte-identical (the hard gate).
+  - **In flight ⇒ `ballHandlerId === null`.** This is now a *valid, handled*
+    `phase==='play'` state, not a crash. Guarded the prior session's flagged
+    non-null assumptions: `applyMovement` takes an explicit `offense: Side` (the
+    off-ball branch keys off it, not `ballHandler.side`, so off-ball movers still
+    cut/relocate while the ball flies); `runStep`'s pass/strip/gamble blocks are
+    already under `if (handler)` so they no-op in flight. The order-dep probe's
+    2-arg `applyMovement` call still works (offense defaults to the handler's side).
+  - **`lead` distinguishes the two target modes** Q18 calls for: a *direct* pass
+    (`lead:false`) HOMES — `to` is re-aimed to the receiver's current spot each
+    step, so it curves onto a moving target and (barring interception) is a sure
+    catch; a *lead* pass (`lead:true`) flies to a FIXED `to` spot a cutter must run
+    onto (caught only if the receiver is within `LEAD_CATCH_RADIUS` of it, else it
+    sails — an errant-pass turnover). `targetId` is the intended catcher in both.
+  - **Shots resolve at release, not as a flight (this session).** `kind:'shot'`
+    is in the union as the frozen contract, but a shot currently resolves
+    make/miss the moment the gather releases (Q33) rather than launching a shot
+    ball to the rim — the UI already animates the make/miss arc from the
+    `shotMake`/`shotMiss` events, so no shot-ball is needed for visuals yet.
+    Wiring a real shot-ball flight (block-at-release, then resolve on arrival at
+    the rim, unifying rebounds as a loose ball — the Q18 unification note) is a
+    clean later extension that needs no schema change. Flagged for fan-out.
+
+### Q32 — Pass interception: positional (read the lane) vs a dice roll
+**[CHOSEN: purely positional — a defender body in the travel lane picks it off; no roll]**
+- Q18/Q20 want steals to be *positional + anticipatory* ("read the lane, step into
+  it"), and the task says reuse `contestedStep`/separation geometry over a dice
+  roll where possible. So the old probabilistic `passStealChance` (a per-pass
+  `PASS_STEAL_BASE` roll) is **replaced for in-flight passes** by a geometric
+  check: each step the ball advances along a segment, the nearest opponent within
+  `PASS_INTERCEPT_RADIUS` of that segment (and actually in the ball's path) **picks
+  it off** — deterministic, skill-expressing (leave a man in the lane and you lose
+  it), and it makes lead passes a real read. `passStealChance` is kept exported for
+  the UI's risk glow (it still wants a 0..1 to color the pass target).
+- **Radius choice:** `PASS_INTERCEPT_RADIUS = 2.8`, just over the placeholder AI's
+  own `laneClear` threshold (a defender within ~2.2 of the lane makes the AI hold
+  the ball), so AI-vs-AI it threads clean passes and interceptions are rare; a
+  *human* who leaves a defender in the lane gets picked. Tunable; advisory only.
+- **Tradeoff / risk:** a binary in-lane = 100% pick can feel harsh and removes the
+  passer's attribute from the in-flight result (passing only sets ball speed now).
+  Acceptable for the positional model; if playtest wants nuance, layer a deflect-
+  vs-clean-pick or a passing-vs-perimeterD modulation on the geometric hit later.
+- *Steals/possessions will move in `pnpm balance`* — intended (Q27 advisory).
+
+### Q33 — Shot = multi-step gather→release (Q17), composed with existing per-step state
+**[CHOSEN: a `GameState.gather` windup; shooter rooted; make%/block read at release]**
+- Replaces the instantaneous shot. `CALL_SHOT` (human) and the AI's `plan.shoot`
+  both **start a gather** (`{ shooterId, release }`) instead of resolving on the
+  spot; the shooter is rooted (order→idle) for `release` steps while the defense
+  can close, then the shot resolves against the **post-closeout** floor — so a
+  good closeout *during* the windup deters/contests the look, exactly Q17. Open vs
+  contested make% flows unchanged through the existing tables (`shotMakeChance`
+  reads `openness`, `blockChance` reads the nearest contester at release).
+  - **Gather length** `GATHER_BASE − quick-release(shooting)` → **2–3 steps**
+    (`gatherStepsOf`); a high-`shooting` shooter releases a touch quicker. Kept
+    short to bound pace drift and the determinism surface.
+  - **Composes with `primed`/`bull` rather than re-deriving them** (per the task):
+    a shot off a drive sets `primed` to survive the whole windup (it would
+    otherwise decay during the gather and lose the `DRIVE_FINISH_BONUS`); the
+    `p.bull` loose-handle still feeds the on-ball strip while the handler holds the
+    ball, and a committed gather can't be aborted mid-windup (rooted) — readable,
+    like a real shooter who's already left his feet. Abort-on-hard-contact is a
+    possible later nuance.
+  - **`CALL_SHOT` now begins a windup + advances a step** rather than resolving
+    instantly; the action surface is unchanged (the UI still dispatches
+    `CALL_SHOT`), only its timing. Telegraphing the gather in the UI is a later
+    (Q14/Q15) session.
+
+### Q28 (revisited) — verb reconciliation under the step+actions model
+The `Order` union's **verb surface is unchanged** this session (drive/cut/move/
+pass/screen/guard/double/help/steal) — UI and the coming AI session target the
+same shape. What changed is *wiring*, not verbs: `pass` is no longer a one-shot
+`BeatEvent`-style resolve (it launches the Q31 ball), and a shot is a gather (Q33)
+rather than an instant resolve. `drive`/`cut` remain the sprint specializations of
+the move order (the Q28 retention). The literal verb deletion (fold drive/cut into
+move+mode) is still deferred — folding it now would churn the UI/AI surface the
+other sessions are building against, for no behavioral gain.
+
 ## Variation ideas to try later (compare/combine)
 
 - Accel ramp (Q4) **+** engine-internal chaining (Q3 alt) as a low-risk first
