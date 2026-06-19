@@ -501,9 +501,35 @@ only your own orders; you read the opponent from motion.
   Honest but punts the structural what's-taxed/recover-when question we can settle
   now. Set aside.
 
-## Open decisions (not yet made)
-- **Validation gates** — keep the guardrails: shot mix (rim finishes alive),
-  defense-matters %, steals ~4, pace ~30 poss, deterministic replays.
+### Q27 — Validation gates (which guardrails become hard gates vs advisory)?
+**[CHOSEN: tiered gates — hard invariants + band gates + advisory; may switch to all-advisory during heavy iteration]**
+- `balance.ts` currently **reports** (shot mix, 3PA, steals/blocks/clock-TOs,
+  pace, stamina avg/min, defense-matters %) but mostly doesn't *assert*; pace is
+  keyed on beats (Q10 deletes beats; possessions survive). Need gates strict
+  enough to catch real regressions, loose enough not to false-fail on *intended*
+  balance shifts.
+- **Tiered gates (chosen):**
+  - **Hard invariants (always assert):** *deterministic replay* (binary; the
+    rework's stated hard constraint that sub-steps replay exactly);
+    *rim-finishes-alive* (layup share > floor, not zero); *defense-matters*
+    (guarding cuts AI pts/poss by ≥ a floor %) — the headline property the rework
+    defends.
+  - **Band gates (assert as wide ranges, catch gross breakage only):** steals ~4
+    and pace ~30 poss — fail on 0 steals / 5 possessions, not on feel drift.
+  - **Advisory (print only):** full shot-mix distribution, 3P%, stamina curve.
+  - Migrate the pace print `beats/game → steps/game` (possessions target
+    unchanged).
+- **All hard gates, fixed ranges** — strictest, but brittle mid-rework: the step
+  model legitimately moves shot mix / pace, so tightly-banded feel metrics
+  false-fail and red gets ignored. Set aside.
+- **All advisory (status quo, print only)** — zero false failures but too loose;
+  easy to silently regress rim finishes or replay determinism. Set aside **for
+  now** — *we may want this at some point*: during heavy exploratory iteration the
+  hard gates themselves can get in the way, so a temporary all-advisory mode (or
+  a flag to mute gates) is a useful escape hatch while the step model is in flux.
+
+*All open decisions from the rework are now resolved (Q21–Q27). Remaining work is
+implementation + harness tuning against `pnpm balance`, not further spec.*
 
 ## Variation ideas to try later (compare/combine)
 
