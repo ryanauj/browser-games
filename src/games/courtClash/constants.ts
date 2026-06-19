@@ -229,10 +229,13 @@ export const LEAD_CATCH_RADIUS = 7
 // travel lane picks it off (positional, Q32 — no dice). See engine.advanceFlight.
 // ---------------------------------------------------------------------------
 
-/** Floor units the ball travels per STEP, base + a passer's `passing` bonus — far
- *  faster than a player runs, so a pass completes in ~2-3 steps. */
-export const PASS_SPEED_BASE = 14
-export const PASS_SPEED_PASSING = 6
+/** Floor units the ball travels per STEP, base + a passer's `passing` bonus —
+ *  several times a jog (~5) so the ball clearly outpaces a closeout and a kick
+ *  completes in ~2 steps (a catch-and-shoot can survive the recovery). Slower and
+ *  a defender always recovers before the catch; far faster and it teleports past
+ *  any lane read (Q32). */
+export const PASS_SPEED_BASE = 26
+export const PASS_SPEED_PASSING = 8
 /** A defender whose body is within this of the ball's travel segment (and in its
  *  path) intercepts it (Q32). Just over the AI's own lane-clear threshold (~2.2)
  *  so the placeholder AI threads clean passes, but a man left in the lane in human
