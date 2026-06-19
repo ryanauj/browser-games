@@ -38,8 +38,13 @@ order/state schema, and the determinism harness. **No** AI behavior, actions
 - **Simultaneous resolution (Q16).** The AI plans from the revealed (last-step)
   positional state only (the placeholder reads positions/stamina, never the
   human's order committed this step); movement applies to everyone from
-  start-of-step positions, so resolution is order-independent, and `separateBodies`
-  iterates in fixed array order with fixed math for a deterministic tie-break.
+  start-of-step positions, **deterministic via the fixed iteration order**
+  (`separateBodies` iterates in fixed array order with fixed math for a
+  deterministic tie-break). *(Correction: Session 1 was deterministic but NOT yet
+  order-independent — the single-pass loop let a bulled defender's jog be
+  compounded or discarded by ball-side, and off-ball `contestedStep` read live
+  positions. **True order-independence was added in the two-phase resolve (Q30,
+  next session).**)*
 - **Stamina shape (Q26).** `STAMINA_COST` is now per-step **by mode** (`idle`
   recovers, `jog` cheap, `sprint` drains ∝ current speed); a step that barely
   moved recovers like idle; the Q5 redirect tax is added on a bail. Magnitudes
