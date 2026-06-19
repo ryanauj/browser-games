@@ -437,9 +437,47 @@ only your own orders; you read the opponent from motion.
   drops you to jog/zero-accel with no angle×speed tax. Partly undoes Q5; bailing
   too cheap, commitment loses teeth. Set aside.
 
+### Q25 — AI route planner (orchestrate routes/shots/passes/leads/screens, pure & cheap)?
+**[CHOSEN: committed intents in serialized state + a predictive (Q16-legal) rollout selector]**
+- Today's `aiPlan` (`ai.ts:105`) is a pure, **stateless, per-beat greedy** floor
+  general (one order/player + optional shot via `shotEV`/`spacingOrders`/matchup
+  scoring). At step cadence (~40–60 steps/possession) it must drive routes,
+  multi-step gathers, passes + leads, and screens for 5 men.
+- **The load-bearing choice** is whether the AI **holds a committed intent across
+  steps**. It must: the model only grants sprint speed by *committing* a line, and
+  re-targeting **resets the accel ramp** (Q12). So an AI that re-decides every
+  step can never build momentum.
+- **Committed intents + predictive rollout (chosen).** Each AI player carries a
+  small **intent** in replay-exact serialized state:
+  `{ kind: drive|cut|space|screen|gather|guard|help|contest, target,
+  mode: jog|sprint, guard: abortCond, ttl }`. Per step: if the intent's guard
+  trips / ttl expires / it's fulfilled → **re-select**; otherwise **continue the
+  committed line** (re-emit the target so momentum keeps building). The AI thus
+  *commits like a human* — readable, telegraphed, symmetric, beatable. **Selector
+  = predictive rollout:** when an intent fires, choose it by a short forward
+  rollout (predict the opponent as static / a fixed policy, roll the AI's own
+  candidate routes forward a few steps, pick best) rather than a one-step greedy
+  score. Pure & deterministic. Only the handler runs the richest branch
+  (gather vs lead-pass vs drive, with lane-interception risk from the loose-ball
+  primitive); off-ball is cheap cut/station selection; guards are simple
+  distance/lane checks.
+- **Selector richness is a swappable knob** along one axis:
+  - *greedy score* — cheapest; the **downgrade fallback** if rollout cost bites.
+  - *predictive rollout* — **chosen**; richer, still Q16-legal because it
+    **predicts** the opponent, never reads your hidden order.
+  - *best-response* — **off-limits**: to be useful at the current simultaneous
+    step it needs your *actual* committed order, which Q16 hides (it would have
+    to peek/cheat or resolve before you commit). The one line not to cross.
+- **Stateless reactive per-step (A)** — no stored intent, re-derive every step.
+  Cheapest/purest but re-targeting resets accel every step → AI never builds
+  sprint speed (can't drive downhill, can't sprint to cut off a spot).
+  **Disqualified by the model.**
+- *Correction logged:* an earlier framing called *all* lookahead a Q16 violation
+  — wrong. Only **best-response** lookahead does; **predictive** lookahead is
+  legal, and its cheap form is just a richer intent-selector (it collapses into
+  this option, not a rival architecture).
+
 ## Open decisions (not yet made)
-- **AI route planner** — how the CPU plans/adjusts routes for 5 men each side,
-  staying pure & cheap.
 - **Stamina economy** — recalibrate costs for continuous reaction taxes so games
   don't gas everyone (watch `pnpm balance` stamina line).
 - **Validation gates** — keep the guardrails: shot mix (rim finishes alive),
