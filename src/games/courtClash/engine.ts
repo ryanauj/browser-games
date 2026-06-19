@@ -13,6 +13,9 @@ import {
   COLLIDE_RADIUS,
   CONTEST_RADIUS,
   DRIVE_FINISH_BONUS,
+  GATHER_BASE,
+  GATHER_MIN,
+  GATHER_RELIEF,
   GAMBLE_STEAL_BASE,
   GAMBLE_STEAL_STAT_WEIGHT,
   GASSED_THRESHOLD,
@@ -759,6 +762,13 @@ function passSpeedOf(p: Player): number {
   return PASS_SPEED_BASE + (p.attr.passing / 99) * PASS_SPEED_PASSING
 }
 
+/** Steps a shot gathers before it releases (Q17/Q33) — a base windup trimmed by a
+ *  quick-release (`shooting`) shooter, floored so the defense always gets at least
+ *  one closeout step during the gather. */
+function gatherStepsOf(p: Player): number {
+  return Math.max(GATHER_MIN, Math.round(GATHER_BASE - (p.attr.shooting / 99) * GATHER_RELIEF))
+}
+
 /** Build the traveling-ball entity for a pass leaving `passer` (Q18/Q31). A lead
  *  pass aims at the fixed point `lead` (a cutter runs onto it); a direct pass
  *  homes onto the receiver each step (`to` re-aimed in advanceFlight). */
@@ -878,7 +888,11 @@ function advanceMotion(
   return applyMovement(players, ballHandlerId, offense)
 }
 
-function runStep(state: GameState): GameState {
+/** Advance one step. `playerShootId` is the human's shoot intent for THIS step
+ *  (from CALL_SHOT); an AI shot comes from its own plan. A shot is no longer
+ *  instant — it starts a multi-step GATHER (Q17/Q33) the defense can contest
+ *  during, releasing against the post-closeout floor. */
+function runStep(state: GameState, playerShootId?: string): GameState {
   if (state.phase === 'gameover') return state
 
   const players = state.players.map((p) => ({ ...p, pos: { ...p.pos } }))
@@ -897,6 +911,37 @@ function runStep(state: GameState): GameState {
     if (p) p.order = o.order
   }
 
+  // GATHER bookkeeping (Q17/Q33), BEFORE movement so the shooter is rooted and a
+  // drive's `primed` finish flag is preserved through the windup this step. A shot
+  // intent comes from the AI's plan (its own offense) or the human's CALL_SHOT.
+  const shootId = state.offense === 'ai' ? plan.shoot : playerShootId
+  let activeGather = state.gather
+  let startRelease: number | null = null
+  if (activeGather) {
+    // Continue an in-progress windup: the shooter is committed (rooted), unless he
+    // somehow no longer holds the ball (then the windup is void).
+    const shooter = byId(players, activeGather.shooterId)
+    if (shooter && shooter.id === state.ballHandlerId) shooter.order = { kind: 'idle' }
+    else activeGather = null
+  } else if (shootId && shootId === state.ballHandlerId && !state.ball) {
+    const shooter = byId(players, shootId)
+    // The CPU re-reads its look as it commits: a hard contest already on it makes
+    // it pass up the shot (unless the clock forces it). The human's CALL_SHOT is
+    // always honored — they chose to shoot.
+    let take = true
+    if (state.offense === 'ai' && shooter) {
+      const mustShoot = state.shotClock <= 1
+      const need = shotType(shooter.pos) === 'three' ? 0.45 : 0.22
+      take = mustShoot || openness(players, shooter) > need
+    }
+    if (shooter && take) {
+      const n = gatherStepsOf(shooter)
+      shooter.order = { kind: 'idle' } // root for the windup
+      if (shooter.primed > 0) shooter.primed = n + 1 // keep a drive's finish alive to release
+      startRelease = n - 1 // windup steps remaining after this start step
+    }
+  }
+
   // 2. MOVEMENT FIRST: everyone moves this beat — including the defense's
   //    closeouts and rotations — BEFORE any contest resolves. This is what makes
   //    defense matter: a shot/pass/drive is judged against where defenders end
@@ -910,20 +955,17 @@ function runStep(state: GameState): GameState {
 
   const handler = byId(players, state.ballHandlerId)
 
-  // 3. A committed CPU shot resolves against the post-movement floor — but the
-  //    CPU re-reads the look after the defense closes out: if a hard contest
-  //    arrived, it passes the shot up (resets) unless the clock forces it. This
-  //    is how a good closeout *deters* a shot, not just lowers its odds.
-  if (plan.shoot && state.offense === 'ai') {
-    const shooter = byId(players, plan.shoot)
-    const mustShoot = state.shotClock <= 1
-    // A three needs a real window post-closeout; rim/mid looks are taken unless
-    // truly smothered.
-    const need = shooter && shotType(shooter.pos) === 'three' ? 0.45 : 0.22
-    if (shooter && (mustShoot || openness(players, shooter) > need)) {
-      return resolveShot({ ...state, players, rngState: r.next }, plan.shoot)
-    }
-    // Shot passed up; ball stays, clock ticks, the CPU re-plans next beat.
+  // 3. GATHER → RELEASE (Q17/Q33). The shot resolves against the post-movement
+  //    floor — the defense has had the whole windup to close, so a good closeout
+  //    contests/deters it through the existing shot tables. Until release, the ball
+  //    just sits in the shooter's hands and the clock ticks.
+  if (activeGather) {
+    const release = activeGather.release - 1
+    if (release <= 0) return resolveShot({ ...state, players, gather: null, rngState: r.next }, activeGather.shooterId)
+    return finalizeClock({ ...state, players, gather: { ...activeGather, release }, rngState: r.next, events, log })
+  }
+  if (startRelease !== null && shootId) {
+    return finalizeClock({ ...state, players, gather: { shooterId: shootId, release: startRelease }, rngState: r.next, events, log })
   }
 
   // 4. A pass called by the ball handler LAUNCHES the traveling ball (Q18): it
@@ -1015,17 +1057,11 @@ export function reducer(state: GameState, action: Action): GameState {
       return runStep(state)
     case 'CALL_SHOT': {
       if (state.phase !== 'play') return state
-      // Let the defense close out one step before the shot resolves — the same
-      // courtesy the CPU's shots get (which resolve post-movement in runStep).
-      // Without this, a human could shoot before any defender recovered. The
-      // shooter is planted so they don't drift; we move only (no timer decay) so
-      // a fresh drive's finishing boost still counts.
-      const players = state.players.map((p) => ({ ...p, pos: { ...p.pos } }))
-      const shooter = byId(players, action.playerId)
-      if (!shooter) return state
-      shooter.order = { kind: 'idle' }
-      applyMovement(players, state.ballHandlerId)
-      return resolveShot({ ...state, players }, action.playerId)
+      // A human shot is no longer instant: it COMMITS the shooter to a gather
+      // (Q17/Q33) and advances one step. The windup then ticks down over the
+      // following Next-Beat taps (runStep continues the active gather), releasing
+      // against the post-closeout floor — the same courtesy the CPU's shots get.
+      return runStep(state, action.playerId)
     }
     case 'NEW_GAME':
       return createInitialState(action.seed)
