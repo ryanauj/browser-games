@@ -3,12 +3,14 @@ import {
   HELP_PAINT_RADIUS,
   MAX_SHOT_RANGE,
   OPENNESS_SHOT_WEIGHT,
+  PASS_INTERCEPT_RADIUS,
   RIM_RADIUS,
   SHOT_BASE,
   SHOT_STAT_WEIGHT,
 } from './constants'
 import { clampToCourt, dist, distToRim, distToSegment, nearestOpponent, openness, opponentOf, shotType } from './geometry'
-import type { GameState, Order, Player, Side, Vec } from './types'
+import { reducer } from './engine'
+import type { Action, GameState, Order, Player, Side, Vec } from './types'
 
 const statN = (v: number): number => (v - 50) / 49
 
@@ -96,171 +98,328 @@ function spacingOrders(handler: Player, players: Player[], ai: Player[]): { play
   return orders
 }
 
-/**
- * ⚠️ PLACEHOLDER AI (movement rework, Session 1). This is the OLD per-step greedy
- * floor general, adapted only minimally to the step engine: its `move` orders now
- * carry an explicit jog mode (Q13) and the ball handler's `drive` is the sprint
- * verb that builds momentum. It re-decides every step, so it never holds a
- * committed intent across steps — meaning it can't build sprint speed the way the
- * model intends (re-targeting resets the ramp, Q12). That's fine for exercising
- * the engine this session; the real committed-intent + predictive-rollout planner
- * is a LATER session (Q25). Do not mistake this for the rework's AI.
- *
- * Pure: reads the state, returns orders for its five (and, on offense, an optional
- * shot). Heuristics kept legible and beatable:
- *  - Offense: shoot a good/forced look; else swing to a more open teammate;
- *    else attack the rim. Off-ball men relocate to get open.
- *  - Defense: man up by matchup; double the ball when the handler gets open,
- *    pulling the helper off the least dangerous man.
- */
-export function aiPlan(state: GameState, side: Side = 'ai'): AiPlan {
+// ===========================================================================
+// COMMITTED-INTENT + PREDICTIVE-ROLLOUT FLOOR GENERAL (Q25)
+//
+// The real planner. The placeholder it replaces re-decided every step (greedy,
+// per-step) so it could never hold a committed line — and the model only grants
+// sprint speed by committing (re-targeting resets the accel ramp, Q12/Q24). This
+// planner instead:
+//
+//   1. COMMITS INTENTS. An offensive intent (drive a line, attack a gap, kick to
+//      a named valve, set/use a ball screen, pull up) is expressed as a standing
+//      `Order` that PERSISTS across steps. Re-emitting the same target each step
+//      is "continue" — momentum keeps building (no redirect tax); switching to a
+//      different-heading order is a "bail" that the engine charges the Q5
+//      angle×speed cost for. A small hysteresis bonus on continuing the current
+//      committed sprint keeps the AI from thrashing its own momentum.
+//   2. SELECTS BY PREDICTIVE ROLLOUT. Each candidate intent is scored by cloning
+//      the state and running the REAL pure reducer forward N steps (real shots,
+//      passes, lane interception), then reading the resulting EV — the best look
+//      the ball reaches — net a turnover penalty if the possession is coughed up.
+//      The opponent is PREDICTED as continuing its revealed (last-step) orders;
+//      we never read the human's order committed THIS step (Q16-legal — this is a
+//      predictive rollout, not a best-response to a hidden order).
+//
+// DETERMINISM (the trap): the rollout must not corrupt replay. It runs on a deep
+// clone whose `rngState` is a SEPARATE derived seed (a hash of the live state), so
+// (a) the live `rngState` only ever advances on a real RUN_STEP, never during a
+// hypothetical, and (b) the AI can't peek the actual RNG outcome of its own shot.
+// A module-local re-entrancy guard makes the reducer's *internal* aiPlan call use
+// a cheap persist-orders policy inside a rollout — preventing infinite recursion
+// and giving the "opponent continues its orders" prediction for free. aiPlan stays
+// a PURE function of the state it's handed (no Date/Math.random, no live mutation),
+// which is what keeps `pnpm determinism` byte-identical across all 10 seeds.
+// ===========================================================================
+
+/** Rollout horizon (steps). Short — a few steps is enough to read whether an
+ *  intent reaches a real look; the planner re-selects every step. */
+const ROLLOUT_STEPS = 5
+/** A coughed-up possession (steal / errant pass / shot-clock) is worth roughly a
+ *  forfeited point of expectation — subtract it from a candidate's best look so a
+ *  turnover-prone line doesn't out-score a safe one with the same upside. */
+const TURNOVER_PENALTY = 0.8
+/** Hysteresis: a touch added to the candidate that CONTINUES the current
+ *  committed sprint, so the AI keeps its momentum unless a switch clearly wins
+ *  (re-targeting would reset the accel ramp, Q12). */
+const COMMIT_HYSTERESIS = 0.1
+
+const byId = (players: Player[], id: string | null | undefined): Player | undefined =>
+  id == null ? undefined : players.find((p) => p.id === id)
+
+/** Re-entrancy depth. >0 means we're INSIDE a rollout — the reducer's internal
+ *  aiPlan call must not start its own rollout (recursion + cost) and instead just
+ *  persists the committed orders (the "opponent continues" prediction). Always
+ *  returns to 0 between top-level calls (try/finally), so aiPlan remains a pure
+ *  function of its input state — never coupled to call count (the replay gate). */
+let rolloutDepth = 0
+
+/** Derive a SEPARATE rollout RNG from the live state — deterministic (pure
+ *  function of `rngState`) but distinct from it, so a hypothetical neither
+ *  advances the real RNG nor peeks the real shot's outcome. xorshift32. */
+function deriveSeed(s: number): number {
+  let x = (s ^ 0x9e3779b9) | 0
+  x ^= x << 13
+  x |= 0
+  x ^= x >>> 17
+  x ^= x << 5
+  return x | 0
+}
+
+/** A clone deep enough that running the reducer on it can't touch the live state.
+ *  (The reducer is already pure — it maps players to fresh objects each step — so
+ *  we only need to detach what WE mutate: player orders, rngState, score.) */
+function cloneState(s: GameState): GameState {
+  return {
+    ...s,
+    players: s.players.map((p) => ({ ...p, pos: { ...p.pos } })),
+    ball: s.ball
+      ? { ...s.ball, pos: { ...s.ball.pos }, vel: { ...s.ball.vel }, from: { ...s.ball.from }, to: { ...s.ball.to } }
+      : null,
+    gather: s.gather ? { ...s.gather } : null,
+    score: { ...s.score },
+    events: [],
+  }
+}
+
+/** The EV of the look currently in `side`'s hands: the ball handler's own shot
+ *  value from where he stands (positional, no RNG). 0 while the ball is in flight
+ *  or the other side holds it. This is what a rollout "reads" at the horizon —
+ *  and because shotEV ranks an open rim finish (~1.4) above an open three (~1.2),
+ *  the planner VALUES rim attacks correctly even though the current gather over-
+ *  blocks them at release (the advisory artifact is a tuning concern, not ours). */
+function ballEV(s: GameState, side: Side): number {
+  const h = byId(s.players, s.ballHandlerId)
+  if (!h || h.side !== side) return 0
+  return shotEV(h, s.players).ev
+}
+
+/** Predictive rollout score for one candidate set of orders, for `side` on
+ *  offense. Clone → set the candidate's orders → roll the REAL reducer forward
+ *  with a derived RNG, the opponent continuing its revealed orders. Value =
+ *  the best look the ball reached over the window, minus a turnover penalty if
+ *  the possession was lost without a shot going up. Pure + deterministic. */
+function rolloutScore(state: GameState, side: Side, orders: { playerId: string; order: Order }[], shoot?: string): number {
+  let cur = cloneState(state)
+  cur.rngState = deriveSeed(state.rngState)
+  for (const o of orders) {
+    const p = byId(cur.players, o.playerId)
+    if (p) p.order = o.order
+  }
+  const startPoss = cur.possession
+  let peak = ballEV(cur, side)
+  let shotResolved = false
+  let turnover = false
+
+  rolloutDepth += 1
+  try {
+    // First step honors an explicit shoot intent (start the gather); the rest just
+    // advance the committed routes (the internal aiPlan persists them, depth>0).
+    const first: Action = shoot ? { type: 'CALL_SHOT', playerId: shoot } : { type: 'RUN_STEP' }
+    cur = reducer(cur, first)
+    for (let i = 0; ; i++) {
+      for (const e of cur.events) {
+        if (e.kind === 'shotMake' || e.kind === 'shotMiss' || e.kind === 'block') shotResolved = true
+        else if (e.kind === 'steal' || e.kind === 'turnover' || e.kind === 'shotclock') turnover = true
+      }
+      const ev = ballEV(cur, side)
+      if (ev > peak) peak = ev
+      // A possession change (made shot, turnover, defensive board, shot clock)
+      // ends this line — stop reading past it.
+      if (cur.possession !== startPoss || cur.phase === 'gameover') break
+      if (i >= ROLLOUT_STEPS - 1) break
+      cur = reducer(cur, { type: 'RUN_STEP' })
+    }
+  } finally {
+    rolloutDepth -= 1
+  }
+
+  // A resolved shot is valued at the (EV-correct) look we generated; a turnover
+  // forfeits the possession; otherwise it's the best look reached in the window.
+  if (turnover && !shotResolved) return peak - TURNOVER_PENALTY
+  return peak
+}
+
+/** The cheap policy used INSIDE a rollout (rolloutDepth>0): persist every order
+ *  for `side` (so committed sprints keep building momentum and spacing holds),
+ *  and — if `side` is on offense — let a SET handler with a genuinely good look
+ *  pull the trigger so a possession can actually resolve into points within the
+ *  window. No nested rollout (that's the recursion the guard exists to stop). */
+function persistPlan(s: GameState, side: Side): AiPlan {
+  const mine = s.players.filter((p) => p.side === side)
+  const orders = mine.map((p) => ({ playerId: p.id, order: p.order }))
+  let shoot: string | undefined
+  if (s.offense === side && !s.ball && !s.gather) {
+    const h = byId(s.players, s.ballHandlerId)
+    // Only a rooted/set handler shoots in-sim — a driver keeps attacking, so the
+    // rollout reads the drive's EV at the rim rather than firing the over-blocked
+    // gather. Mirrors the engine's own take-gate so the shot isn't vetoed.
+    if (h && h.side === side && h.order.kind === 'idle') {
+      const { ev, open } = shotEV(h, s.players)
+      const need = shotType(h.pos) === 'three' ? 0.45 : 0.22
+      if (distToRim(h.pos) < MAX_SHOT_RANGE * 0.95 && (s.shotClock <= 2 || (ev >= 0.9 && open >= need))) shoot = h.id
+    }
+  }
+  return { orders, shoot }
+}
+
+// ---- Offense: committed intents, chosen by predictive rollout ---------------
+
+/** Teammates worth a kick: in shooting range, with a passing lane the defense
+ *  can't read (no defender body sitting in it — a clean catch-and-shoot outlet),
+ *  ranked by their shot value. The handler is the swing point of the offense, so
+ *  these are the named valves an intent can kick to. */
+function kickTargets(handler: Player, players: Player[], ai: Player[]): Player[] {
+  const opp = players.filter((p) => p.side !== handler.side)
+  const cands: { m: Player; ev: number }[] = []
+  for (const m of ai) {
+    if (m.id === handler.id) continue
+    if (distToRim(m.pos) >= MAX_SHOT_RANGE) continue
+    // Don't throw it through a defender's chest — a body in the lane is a live
+    // interception (Q32 is purely positional now), so skip a clogged outlet.
+    let laneClear = true
+    for (const d of opp) {
+      if (distToSegment(d.pos, handler.pos, m.pos) < PASS_INTERCEPT_RADIUS + 1) {
+        laneClear = false
+        break
+      }
+    }
+    if (!laneClear) continue
+    cands.push({ m, ev: shotEV(m, players).ev })
+  }
+  cands.sort((a, b) => b.ev - a.ev || a.m.id.localeCompare(b.m.id))
+  return cands.slice(0, 2).map((c) => c.m)
+}
+
+/** A drive line that attacks the gap AWAY from the on-ball defender — a counter
+ *  to a man shading one shoulder, giving the rollout a second downhill option
+ *  besides the straight rim attack. */
+function gapDrive(handler: Player, players: Player[]): Vec {
+  const onBall = nearestOpponent(players, handler)
+  const side = onBall && onBall.pos.x > handler.pos.x ? -1 : 1
+  return clampToCourt({ x: BASKET.x + side * 10, y: BASKET.y + 4 })
+}
+
+function planOffense(state: GameState, side: Side): AiPlan {
+  const players = state.players
+  const ai = players.filter((p) => p.side === side)
+  const handler = byId(players, state.ballHandlerId)
+
+  // A windup is in progress (the shooter is rooted): just keep the floor spaced
+  // and let the engine carry the gather to release — don't try to re-decide it.
+  if (state.gather) {
+    const shooter = byId(players, state.gather.shooterId)
+    const sh = shooter && shooter.side === side ? shooter : handler
+    const orders = sh ? spacingOrders(sh, players, ai) : ai.map((p) => ({ playerId: p.id, order: p.order }))
+    return { orders }
+  }
+  // The ball is in flight (a kick we threw) or we simply don't hold it: hold the
+  // committed orders so the receiver runs onto the catch and the others stay home.
+  if (!handler || handler.side !== side) {
+    return { orders: ai.map((p) => ({ playerId: p.id, order: p.order })) }
+  }
+
+  // Buzzer-beater: out of time to develop anything — put it up.
+  if (state.shotClock <= 1) {
+    return { orders: [...spacingOrders(handler, players, ai), { playerId: handler.id, order: { kind: 'idle' } }], shoot: handler.id }
+  }
+
+  const offBall = spacingOrders(handler, players, ai)
+  /** Assemble a full team plan: the off-ball spacing, the handler's chosen order,
+   *  and an optional override of one off-ball man (a screener). */
+  const assemble = (handlerOrder: Order, override?: { playerId: string; order: Order }): { playerId: string; order: Order }[] => {
+    const base = override ? offBall.filter((o) => o.playerId !== override.playerId) : offBall
+    const all = [...base, { playerId: handler.id, order: handlerOrder }]
+    if (override) all.push(override)
+    return all
+  }
+
+  const here = shotEV(handler, players)
+  const inRange = distToRim(handler.pos) < MAX_SHOT_RANGE * 0.95
+  const needOpen = shotType(handler.pos) === 'three' ? 0.45 : 0.22
+
+  interface Cand {
+    orders: { playerId: string; order: Order }[]
+    shoot?: string
+    bonus: number
+    label: string
+  }
+  const cands: Cand[] = []
+
+  // CONTINUE the current committed sprint (momentum-preserving) — only if the
+  // handler is actually on a committed move/drive line worth continuing.
+  if (handler.order.kind === 'drive' || (handler.order.kind === 'move' && handler.order.mode === 'sprint')) {
+    cands.push({ orders: assemble(handler.order), bonus: COMMIT_HYSTERESIS, label: 'continue' })
+  }
+  // DRIVE a line: straight at the rim, and a gap counter.
+  cands.push({ orders: assemble({ kind: 'drive', to: { ...BASKET } }), bonus: 0, label: 'drive-rim' })
+  cands.push({ orders: assemble({ kind: 'drive', to: gapDrive(handler, players) }), bonus: 0, label: 'drive-gap' })
+  // PULL UP / shoot from here — only when the look would actually clear the
+  // engine's take-gate, so choosing it always fires (no wasted rooted step).
+  if (inRange && here.open >= needOpen) {
+    cands.push({ orders: assemble({ kind: 'idle' }), shoot: handler.id, bonus: 0, label: 'pullup' })
+  }
+  // KICK to a named valve (drive-and-kick): the open shooter help left behind.
+  for (const m of kickTargets(handler, players, ai)) {
+    cands.push({ orders: assemble({ kind: 'pass', toId: m.id }), bonus: 0, label: `kick-${m.id}` })
+  }
+  // SET/USE a ball screen when the handler is hemmed in — the nearest teammate
+  // picks the on-ball man while the handler attacks off it.
+  if (here.open < 0.5) {
+    const onBall = nearestOpponent(players, handler)
+    let screener: Player | null = null
+    let bestD = Infinity
+    for (const m of ai) {
+      if (m.id === handler.id) continue
+      const d = dist(m.pos, handler.pos)
+      if (d < bestD) {
+        bestD = d
+        screener = m
+      }
+    }
+    if (screener && onBall) {
+      cands.push({
+        orders: assemble(
+          { kind: 'drive', to: { ...BASKET } },
+          { playerId: screener.id, order: { kind: 'screen', to: { ...onBall.pos }, markId: onBall.id } },
+        ),
+        bonus: 0,
+        label: 'screen',
+      })
+    }
+  }
+
+  // Score every candidate by predictive rollout; the committed-continue line
+  // carries its hysteresis bonus. Stable: first-listed wins exact ties.
+  let best = cands[0]
+  let bestV = -Infinity
+  for (const c of cands) {
+    const v = rolloutScore(state, side, c.orders, c.shoot) + c.bonus
+    if (v > bestV) {
+      bestV = v
+      best = c
+    }
+  }
+  return { orders: best.orders, shoot: best.shoot }
+}
+
+// ---- Defense: positional man + help (reads positions only — Q16-legal) ------
+
+/** Man up by matchup, switch on screens, drop the rim protector to wall the
+ *  driving lane, and double a handler who's gotten open on the perimeter. This is
+ *  pure positional reasoning off the revealed floor (never the opponent's hidden
+ *  order), so it's Q16-legal as-is; the committed-route/rollout machinery is the
+ *  offense's job (defense reacts, it doesn't build momentum lines). */
+function planDefense(state: GameState, side: Side): AiPlan {
   const ai = state.players.filter((p) => p.side === side)
   const opp = state.players.filter((p) => p.side === opponentOf(side))
   const orders: { playerId: string; order: Order }[] = []
 
-  if (state.offense === side) {
-    const handler = ai.find((p) => p.id === state.ballHandlerId)
-    if (!handler) return { orders }
-
-    const here = shotEV(handler, state.players)
-    const d = distToRim(handler.pos)
-    const inRange = d < MAX_SHOT_RANGE * 0.95
-    // Is the rim walled? A HELP defender sitting in the lane near the basket means
-    // charging in is a contested layup or a block — so the handler stops short to
-    // pull up or kick. An unguarded rim (e.g. a static defense that never rotated a
-    // protector over) gets attacked all the way for the finish. This ties the shot
-    // mix to the defense: a help-and-recover defense forces jumpers, a flat-footed
-    // one surrenders layups. The on-ball man doesn't count — he's always goal-side,
-    // and beating him is the whole point of the drive.
-    const onBall = nearestOpponent(state.players, handler)
-    const rimWalled = opp.some(
-      (o) =>
-        o.id !== onBall?.id &&
-        distToRim(o.pos) < RIM_RADIUS + 4 &&
-        distToSegment(o.pos, handler.pos, BASKET) < RIM_RADIUS - 3,
-    )
-    const atRim = d <= (rimWalled ? RIM_RADIUS + 12 : RIM_RADIUS - 2)
-    const mustShoot = state.shotClock <= 1
-    // Late-clock urgency: rather than grind a stalling drive into a buzzer heave
-    // from downtown (a near-0% three that craters the shot chart), take the best
-    // look you can actually get to while still in range — but only in the last
-    // beat or two, so it doesn't abandon a developing drive for an early jumper.
-    const clockLow = state.shotClock <= 2
-    // A driver whose man (or help) is draped on him is "pressured": he should
-    // give up the rock to an open teammate rather than force into the contact.
-    const pressured = here.open < 0.42
-
-    // Off-ball men spread the floor so a kick always has somewhere to go.
-    for (const o of spacingOrders(handler, state.players, ai)) orders.push(o)
-
-    // The best release valve on the floor — found up front so every shot/drive
-    // choice can weigh "give it up" against "take it myself".
-    let bestMate: Player | null = null
-    let bestMateEV = -Infinity
-    let bestMateOpen = 0
-    for (const m of ai) {
-      if (m.id === handler.id) continue
-      if (distToRim(m.pos) >= MAX_SHOT_RANGE) continue
-      // Don't thread it through traffic: a defender sitting in the passing lane
-      // turns a kick into a live-ball steal. Skip a target whose lane is clogged
-      // (the offense holds it and finds a cleaner outlet instead).
-      let laneClear = true
-      for (const dfn of opp) {
-        if (distToSegment(dfn.pos, handler.pos, m.pos) < 2.2) {
-          laneClear = false
-          break
-        }
-      }
-      if (!laneClear) continue
-      const mEV = shotEV(m, state.players)
-      if (mEV.ev > bestMateEV) {
-        bestMateEV = mEV.ev
-        bestMate = m
-        bestMateOpen = mEV.open
-      }
-    }
-    // What the handler's own look is really worth once contact is priced in: a
-    // smothered rim/jumper invites a block or a brick, so a draped handler values
-    // his shot well below its raw EV — which is what tips him into the kick.
-    const hereEff = here.ev * (0.5 + 0.5 * Math.min(1, here.open / 0.55))
-
-    const needOpen = (shotType(handler.pos) === 'three' ? 0.5 : 0.4) - (clockLow ? 0.08 : 0)
-    const goodLook = inRange && here.ev >= (clockLow ? 0.82 : 0.92) && here.open > needOpen
-
-    // 1) Forced shot at the buzzer — take whatever you've got.
-    if (mustShoot) {
-      orders.push({ playerId: handler.id, order: { kind: 'idle' } })
-      return { orders, shoot: handler.id }
-    }
-
-    // 2) Drive-and-kick FIRST: an open teammate three (≈1.2 pts) beats the
-    //    handler's own pull-up two (≈0.9), so the swing is evaluated before the
-    //    handler settles — when help rotates, the shooter it left is the best shot
-    //    on the floor and the offense should find him. The kick must clearly beat
-    //    the handler's (contact-discounted) look so he doesn't pass up a real
-    //    advantage; a pressured handler gives it up more readily.
-    const kickMargin = pressured ? 0.0 : clockLow ? 0.08 : 0.12
-    // …but never pass up a point-blank/wide-open look of your own to do it.
-    const ownLookGreat = inRange && here.open > 0.62 && here.ev >= 1.05
-    // Kick only to a GENUINELY open shooter — a real catch-and-shoot, not a lateral
-    // swing to another covered man. Swinging the covered ball around the arc just
-    // burns clock into a buzzer heave; when no one's truly open the handler attacks
-    // the rim himself. Late, the bar is higher (only a shooter who'll knock it down).
-    const kickOpenBar = clockLow ? 0.62 : 0.54
-    if (!ownLookGreat && bestMate && bestMateOpen > kickOpenBar && bestMateEV >= hereEff + kickMargin) {
-      orders.push({ playerId: handler.id, order: { kind: 'pass', toId: bestMate.id } })
-      return { orders }
-    }
-
-    // 3) Take a genuinely good look for yourself (threes demand a real catch-and-
-    //    shoot window; rim/mid looks fire more freely).
-    if (goodLook) {
-      orders.push({ playerId: handler.id, order: { kind: 'idle' } })
-      return { orders, shoot: handler.id }
-    }
-
-    // 4) Nothing better on offer: attack ALL the way to the rim to collapse the D
-    //    rather than settling for a long two. Pulling up mid-range is a last
-    //    resort — only when the clock is winding down (better a contested two than
-    //    a buzzer heave); otherwise keep driving to draw help and spring a kick.
-    const settleNow = clockLow && inRange
-    if (!atRim && !settleNow) {
-      // Run a ball-screen as you attack, but only when the handler is actually
-      // hemmed in — a tightly-guarded driver gets a pick from the nearest
-      // teammate; an open driver just goes.
-      const hDef = nearestOpponent(state.players, handler)
-      if (hDef && here.open < 0.4) {
-        let screener: Player | null = null
-        let bestD = Infinity
-        for (const m of ai) {
-          if (m.id === handler.id) continue
-          const dd = dist(m.pos, handler.pos)
-          if (dd < bestD) {
-            bestD = dd
-            screener = m
-          }
-        }
-        if (screener) {
-          const pick: Order = { kind: 'screen', to: { ...hDef.pos }, markId: hDef.id }
-          const idx = orders.findIndex((o) => o.playerId === screener!.id)
-          if (idx >= 0) orders[idx].order = pick
-          else orders.push({ playerId: screener.id, order: pick })
-        }
-      }
-      orders.push({ playerId: handler.id, order: { kind: 'drive', to: { ...BASKET } } })
-      return { orders }
-    }
-    orders.push({ playerId: handler.id, order: { kind: 'idle' } })
-    return { orders, shoot: handler.id }
-  }
-
-  // ---- Defense: man up by matchup, then maybe double the ball. ----
   for (let i = 0; i < ai.length; i++) {
     orders.push({ playerId: ai[i].id, order: { kind: 'guard', markId: opp[i].id } })
   }
-  // Screen defense: if a defender got hung up on a pick, the nearest free
-  // teammate switches onto the man they were guarding so a screen can't leave
-  // an attacker wide open (and can't be farmed for a free man every possession).
+  // Screen defense: a defender hung up on a pick hands his man to the nearest free
+  // teammate (a switch), so a screen can't farm a free man every possession.
   for (let i = 0; i < ai.length; i++) {
     if (ai[i].stuck <= 0) continue
     let best = -1
@@ -278,14 +437,14 @@ export function aiPlan(state: GameState, side: Side = 'ai'): AiPlan {
       orders[best] = { playerId: ai[best].id, order: { kind: 'guard', markId: opp[i].id } }
     }
   }
+
   const handler = opp.find((p) => p.id === state.ballHandlerId)
   if (handler) {
     const open = openness(state.players, handler)
     const rimD = distToRim(handler.pos)
     const primaryIdx = opp.findIndex((o) => o.id === handler.id)
 
-    // The rim protector (best interior D) is the low man — he anchors the paint
-    // and shouldn't be the one yanked out to dig.
+    // The rim protector (best interior D, off a non-shooter) anchors the paint.
     let rimProtIdx = -1
     let bestInt = -Infinity
     for (let i = 0; i < ai.length; i++) {
@@ -295,38 +454,21 @@ export function aiPlan(state: GameState, side: Side = 'ai'): AiPlan {
         rimProtIdx = i
       }
     }
-
-    // SET/PLANT (drop) coverage. With solid-body collision, a SET defender — one
-    // who barely moves — anchors hard enough to STUFF a drive, while a defender on
-    // the move gets bulled off his spot. So the rim protector doesn't chase the
-    // ball; he PLANTS in front of the rim, in the driving lane, and holds. Held
-    // there he's set every beat (anchored), turning a bull into a stopped drive —
-    // and a stopped drive becomes a kickout (the Stage-1 offense). He only sags
-    // like this off a non-shooter (his man, the dunker big), the same read a real
-    // drop big makes. Because the plant tracks the BALL's lane — not just his
-    // man — it stops drives a flat-footed static defense lets through, which is
-    // what makes active guarding worth more than standing still under collision.
     const rimMan = rimProtIdx >= 0 ? opp[rimProtIdx] : null
     const canDrop = rimMan && (rimMan.attr.shooting < 58 || distToRim(rimMan.pos) < HELP_PAINT_RADIUS)
     if (rimProtIdx >= 0 && canDrop && rimD < MAX_SHOT_RANGE * 0.85) {
-      // A FIXED anchor in front of the rim — deliberately not tracking the ball, so
-      // the protector reaches it once and then holds, staying SET beat after beat.
-      // Set, he anchors hard enough to stuff a bull; if he chased the ball he'd be
-      // on the move every beat and get bulled off the spot (the very thing the
-      // collision punishes). This is the disciplined drop that turns drives into
-      // kickouts without surrendering the dump-off.
+      // A FIXED anchor in front of the rim — set, he stuffs a bull; chasing the
+      // ball would put him on the move and get him bulled off the spot.
       const plant = clampToCourt({ x: BASKET.x, y: BASKET.y + RIM_RADIUS - 2 })
-      if (dist(ai[rimProtIdx].pos, plant) > 2) {
-        orders[rimProtIdx] = { playerId: ai[rimProtIdx].id, order: { kind: 'help', to: plant } }
-      } else {
-        // Already home — hold (idle = zero motion = maximum anchor).
-        orders[rimProtIdx] = { playerId: ai[rimProtIdx].id, order: { kind: 'idle' } }
-      }
+      orders[rimProtIdx] =
+        dist(ai[rimProtIdx].pos, plant) > 2
+          ? { playerId: ai[rimProtIdx].id, order: { kind: 'help', to: plant } }
+          : { playerId: ai[rimProtIdx].id, order: { kind: 'idle' } }
     }
 
     if (open > 0.6 && rimD < MAX_SHOT_RANGE * 0.7) {
-      // Open on the perimeter: send a second body at the ball, pulled off the
-      // least dangerous man.
+      // Open on the perimeter: send a second body, pulled off the least dangerous
+      // man (lowest shooting × openness).
       let helperIdx = -1
       let leastDanger = Infinity
       for (let i = 0; i < opp.length; i++) {
@@ -343,4 +485,17 @@ export function aiPlan(state: GameState, side: Side = 'ai'): AiPlan {
     }
   }
   return { orders }
+}
+
+/**
+ * The CPU floor general. Pure: reads the REVEALED (last-step) state, returns
+ * orders for its five (and, on offense, an optional shot). On offense it commits
+ * an intent and selects it by predictive rollout (planOffense); on defense it
+ * plays positional man + help (planDefense). Inside a rollout it short-circuits
+ * to the cheap persist policy (so the reducer's own aiPlan call can't recurse).
+ */
+export function aiPlan(state: GameState, side: Side = 'ai'): AiPlan {
+  if (rolloutDepth > 0) return persistPlan(state, side)
+  if (state.offense === side) return planOffense(state, side)
+  return planDefense(state, side)
 }
