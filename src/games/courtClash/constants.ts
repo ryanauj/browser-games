@@ -129,6 +129,14 @@ export const SCREEN_STAT_WEIGHT = 1.6
 export const STUCK_FACTOR = 0.18
 /** A screener is freed (back to idle) after this many STEPS if it hasn't hit anyone. */
 export const SCREEN_HOLD_MAX = 10
+/** Planted STEPS (within SCREEN_RADIUS of the spot/marked body) a screener must
+ *  hold before the pick is "SET" and legal (Q19). Body contact before this — the
+ *  screener still moving INTO the defender — is a moving (illegal) screen. */
+export const SCREEN_SET_STEPS = 2
+/** Body-contact radius for the pick to actually impede / be a moving screen —
+ *  inside the wider SCREEN_RADIUS setup ring, so a screener gets a settling step
+ *  in the ring before contact (set it) instead of barrelling straight in (foul). */
+export const SCREEN_CONTACT = 6
 
 // --- Bodies take up space ---------------------------------------------------
 /** Min distance (floor units) between any two players after a beat resolves — no

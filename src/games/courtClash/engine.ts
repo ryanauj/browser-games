@@ -36,9 +36,11 @@ import {
   REDIRECT_STAMINA,
   SCREEN_BASE,
   SCREEN_BODY,
+  SCREEN_CONTACT,
   SCREEN_HOLD_MAX,
   SCREEN_MAX,
   SCREEN_RADIUS,
+  SCREEN_SET_STEPS,
   SEPARATION_MIN,
   SET_ANCHOR_BONUS,
   SET_MOTION_REF,
@@ -231,33 +233,61 @@ function targetFor(p: Player, players: Player[], ballHandler: Player | undefined
   }
 }
 
-/** Resolve planted screens: a defender who runs through a screener gets stuck
- *  for a beat or two (scaled by the screener's strength vs the defender's
- *  quickness), springing their man. The screener is freed once it connects or
- *  after SCREEN_HOLD_MAX beats. Runs before movement so the slow takes hold. */
-function resolveScreens(players: Player[]): void {
+/** Resolve planted screens (Q19). A pick has two phases keyed off `screenHeld`,
+ *  the count of steps the screener has held planted within SCREEN_RADIUS of its
+ *  spot/marked body:
+ *
+ *   - SETTING (`screenHeld < SCREEN_SET_STEPS`): the screener has arrived in the
+ *     setup ring but isn't established yet. If it's already in body contact
+ *     (SCREEN_CONTACT) with the defender here, it ran INTO him while still
+ *     moving — a MOVING (illegal) screen. Returned as an offensive foul; runStep
+ *     turns it into a turnover.
+ *   - SET (`screenHeld >= SCREEN_SET_STEPS`): the screener is a planted, legal
+ *     body. A marked/contacted defender is impeded — STUCK for a beat or two
+ *     (the existing stuck slow + the screener-as-solid-body in applyMovement),
+ *     springing the screener's teammate. Strength vs the defender's quickness
+ *     scales the stick (SCREEN_BASE..SCREEN_MAX).
+ *
+ *  The screener is freed (→ idle) once it connects a legal pick or after
+ *  SCREEN_HOLD_MAX steps. Positional + deterministic; runs before movement so the
+ *  slow takes hold this step. Returns the screener at fault on an illegal screen. */
+function resolveScreens(players: Player[]): { foulBy: Player } | null {
+  let foul: { foulBy: Player } | null = null
   for (const s of players) {
     if (s.order.kind !== 'screen') continue
     // The pick sets where the screener is headed: a tracked defender (body) or a
-    // fixed spot. Don't set it until the screener has actually planted there —
-    // otherwise it would instantly "screen" whoever happens to be adjacent
+    // fixed spot. Don't accrue "set" time until the screener has actually planted
+    // there — otherwise it would instantly "screen" whoever happens to be adjacent
     // (often its own defender) and free itself before ever travelling.
     const tracked = s.order.markId ? byId(players, s.order.markId) : undefined
     const targetPos = tracked ? tracked.pos : s.order.to
     const planted = dist(s.pos, targetPos) <= SCREEN_RADIUS
-    if (!planted) continue
+    if (!planted) {
+      s.screenHeld = 0 // drifted off the spot — must re-establish to set the pick
+      continue
+    }
     s.screenHeld += 1
+    const isSet = s.screenHeld >= SCREEN_SET_STEPS
+    // Who the pick acts on: the marked defender (a body) for a tracked screen, or
+    // any opposing defender on the spot for a fixed-spot screen. Never the
+    // screener's OWN man — he's behind the pick; a screen springs a teammate by
+    // impeding THEIR defender, not the one already guarding the screener.
+    const candidates = tracked ? (tracked.side !== s.side ? [tracked] : []) : players
     let connected = false
-    for (const d of players) {
+    for (const d of candidates) {
       if (d.side === s.side) continue
-      if (dist(d.pos, s.pos) > SCREEN_RADIUS) continue
-      // The screener's own man is behind the pick — a screen springs a teammate
-      // by impeding *their* defender, not the one already guarding the screener.
+      if (dist(d.pos, s.pos) > SCREEN_CONTACT) continue // not in body contact (yet)
       const guardsScreener =
         (d.order.kind === 'guard' || d.order.kind === 'double' || d.order.kind === 'steal') &&
         d.order.markId === s.id
       if (guardsScreener) continue
-      // A clean connect always sticks for SCREEN_BASE beats; a strong screener
+      if (!isSet) {
+        // Body contact before the pick is established — the screener is still
+        // moving into the defender. ILLEGAL (moving) screen → offensive foul.
+        if (!foul) foul = { foulBy: s }
+        continue
+      }
+      // SET, clean connect: sticks for SCREEN_BASE beats; a strong screener
       // against a less-quick defender holds them an extra beat (up to SCREEN_MAX).
       const quickness = (d.attr.speed + d.attr.perimeterD) / 2
       const advantage = statN(s.attr.strength) - statN(quickness)
@@ -270,6 +300,7 @@ function resolveScreens(players: Player[]): void {
       s.screenHeld = 0
     }
   }
+  return foul
 }
 
 /** Clamp a move so it can't pass through a solid body: if the path from→to
@@ -873,19 +904,21 @@ function catchPass(state: GameState, players: Player[], ball: Ball, receiver: Pl
 
 /** Advance one STEP of motion: decay screen/drive timers, resolve planted
  *  screens, then move every player along their standing order. Mutates players.
- *  Returns whether the ball handler's drive was throttled by traffic this step. */
+ *  Returns whether the ball handler's drive was throttled by traffic this step,
+ *  and the screener at fault on an illegal (moving) screen this step (if any). */
 function advanceMotion(
   players: Player[],
   ballHandlerId: string | null,
   offense: Side,
-): { handlerStalled: boolean } {
+): { handlerStalled: boolean; screenFoul: Player | null } {
   for (const p of players) {
     if (p.stuck > 0) p.stuck -= 1
     if (p.primed > 0) p.primed -= 1 // a finishing boost expires if no shot followed
     p.bull = 0 // loose handle is recomputed each step by the collision
   }
-  resolveScreens(players)
-  return applyMovement(players, ballHandlerId, offense)
+  const foul = resolveScreens(players)
+  const { handlerStalled } = applyMovement(players, ballHandlerId, offense)
+  return { handlerStalled, screenFoul: foul?.foulBy ?? null }
 }
 
 /** Advance one step. `playerShootId` is the human's shoot intent for THIS step
@@ -946,7 +979,17 @@ function runStep(state: GameState, playerShootId?: string): GameState {
   //    closeouts and rotations — BEFORE any contest resolves. This is what makes
   //    defense matter: a shot/pass/drive is judged against where defenders end
   //    up, not where they started.
-  const { handlerStalled } = advanceMotion(players, state.ballHandlerId, state.offense)
+  const { handlerStalled, screenFoul } = advanceMotion(players, state.ballHandlerId, state.offense)
+
+  // ILLEGAL SCREEN (Q19): a screener ran INTO a defender while still moving (not
+  // set) — an offensive foul. Dead ball, possession flips, regardless of whether
+  // the ball is held or in flight. Positional (no roll), so it replays exactly.
+  if (screenFoul) {
+    const def = opponentOf(screenFoul.side)
+    events.push({ kind: 'turnover', by: screenFoul.id, from: { ...screenFoul.pos }, text: `Moving screen — ${screenFoul.name}` })
+    log = pushLog(log, `🚫 Illegal screen on ${screenFoul.name} — offensive foul, ${sideName(def)} ball.`)
+    return setupPossession({ ...state, players, ball: null, rngState: r.next, events, log }, def, SHOT_CLOCK_STEPS, log)
+  }
 
   // BALL IN FLIGHT (Q18): no one holds it — players have moved this step (so the
   // travel lane is read against where the defense ended up), now advance the ball
