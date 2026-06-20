@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { BASKET, LEAD_CATCH_RADIUS, PASS_LANE_RADIUS, WIN_TARGET, riskOf, type Risk } from './constants'
 import { passStealChance, shotMakeChance } from './engine'
 import { dist, distToSegment, leadCatch, nearestOpponent, reachOf, stepToward } from './geometry'
@@ -17,7 +17,7 @@ const COACHED_KEY = 'courtclash-coached'
 /** First-run, learn-by-doing nudges — advance as the player actually acts. */
 const COACH_STEPS = [
   '👋 Tap one of your players (blue) to give an order — or drag them onto a teammate or an open spot.',
-  '👍 Pick an action, then press ▶ Next Beat to run it. Orders stay until you change them.',
+  '👍 Set orders for any of your five, then press ▶ Next Step to advance one step. Orders stick until you change them.',
 ]
 const YOU: Side = 'player'
 /** Floor-unit radius for treating overlapping sprites as a tappable stack. */
@@ -38,11 +38,23 @@ function writeStored(key: string, value: string): void {
   }
 }
 
-/** Build the ball's travel for the beat just resolved from its events, so the UI
- *  can fly the ball along it (pass → shot → rebound, steals, errant throws). The
- *  engine already stamps each event with from/to coords; this just picks the
- *  salient flight and, for passes, flags the defender nearest the lane. */
-function deriveBallFlight(events: BeatEvent[], players: Player[], key: string): BallFlight | null {
+/** Build the ball's travel for the resolution step just resolved from its events,
+ *  so the UI can fly the ball along it (catch, shot → rebound, steals, errant
+ *  throws). The engine stamps each event with from/to coords; this picks the
+ *  salient flight and, for passes, flags the defender nearest the lane.
+ *
+ *  A traveling pass already shows step-by-step as the live `ball` token, so for
+ *  pass/steal/turnover we fly the final gather leg from `lastBallPos` (where the
+ *  token actually was last step) rather than the original release point — no
+ *  jump-back. Shots resolve in one step (no live token) so they keep their
+ *  release→rim arc. `lastBallPos` is null for a one-step pass (caught at launch),
+ *  which correctly falls back to the release point. */
+function deriveBallFlight(
+  events: BeatEvent[],
+  players: Player[],
+  key: string,
+  lastBallPos: Vec | null,
+): BallFlight | null {
   const find = (k: BeatEvent['kind']) => events.find((e) => e.kind === k)
 
   const make = find('shotMake')
@@ -63,34 +75,38 @@ function deriveBallFlight(events: BeatEvent[], players: Player[], key: string): 
   const steal = find('steal')
   if (steal?.from) {
     const grab = steal.to ?? steal.from // interception point, stamped at steal time
+    const src = lastBallPos ?? steal.from
     return {
       key,
       tone: 'steal',
-      segments: [{ from: steal.from, to: grab, arc: 0 }],
-      lane: { from: steal.from, to: grab },
+      segments: [{ from: src, to: grab, arc: 0 }],
+      lane: { from: src, to: grab },
       contestId: steal.by,
     }
   }
 
   const turn = find('turnover')
-  if (turn?.from && turn.to)
-    return { key, tone: 'turnover', segments: [{ from: turn.from, to: turn.to, arc: 0 }], lane: { from: turn.from, to: turn.to } }
+  if (turn?.from && turn.to) {
+    const src = lastBallPos ?? turn.from
+    return { key, tone: 'turnover', segments: [{ from: src, to: turn.to, arc: 0 }], lane: { from: src, to: turn.to } }
+  }
 
   const pass = find('pass')
   if (pass?.from && pass.to) {
+    const src = lastBallPos ?? pass.from
     // Flag the defender nearest the pass lane — the man who could jump it.
     const offSide = players.find((p) => p.id === pass.by)?.side
     let contestId: string | undefined
     let bestD = PASS_LANE_RADIUS * 1.6
     for (const d of players) {
       if (!offSide || d.side === offSide) continue
-      const laneD = distToSegment(d.pos, pass.from, pass.to)
+      const laneD = distToSegment(d.pos, src, pass.to)
       if (laneD < bestD) {
         bestD = laneD
         contestId = d.id
       }
     }
-    return { key, tone: 'pass', segments: [{ from: pass.from, to: pass.to, arc: 0 }], lane: { from: pass.from, to: pass.to }, contestId }
+    return { key, tone: 'pass', segments: [{ from: src, to: pass.to, arc: 0 }], lane: { from: src, to: pass.to }, contestId }
   }
   return null
 }
@@ -162,12 +178,23 @@ export default function CourtClash() {
     return () => window.clearTimeout(t)
   }, [state.events])
 
-  // The ball's flight for the beat just resolved (pass/shot/rebound/steal), fed
-  // to the court to animate the ball traveling. Only shown while the beat glides.
+  // Where the live ball token sat last step (null when it wasn't in flight). A
+  // multi-step pass shows step-by-step as that token, so its resolution leg flies
+  // from here, not the original release point (deriveBallFlight). Updated after
+  // each step settles.
+  const lastBallPos = useRef<Vec | null>(null)
+
+  // The ball's flight for the resolution step just resolved (catch/shot/rebound/
+  // steal), fed to the court to animate the ball arriving. Only shown while the
+  // step glides.
   const ballFlight = useMemo(
-    () => deriveBallFlight(state.events, state.players, `${state.possession}-${state.step}`),
+    () => deriveBallFlight(state.events, state.players, `${state.possession}-${state.step}`, lastBallPos.current),
     [state.events, state.players, state.possession, state.step],
   )
+
+  useEffect(() => {
+    lastBallPos.current = state.ball ? { ...state.ball.pos } : null
+  }, [state.ball, state.step, state.possession])
 
   // --- Risk glow inputs ----------------------------------------------------
   const shooterRisk: Risk | null = useMemo(() => {
@@ -438,8 +465,8 @@ export default function CourtClash() {
     : selected
       ? `${selected.name} (${selected.role}) — pick an action.`
       : onOffense
-        ? 'Your ball. Drag the handler onto the hoop to shoot, or onto a spot/teammate to move/pass — then ▶ Next Beat.'
-        : "Defense. Drag one of your players onto the CPU's ball handler to guard, double, or steal — then ▶ Next Beat."
+        ? 'Your ball. Drag the handler onto the hoop to shoot, or onto a spot/teammate to move/pass — then ▶ Next Step.'
+        : "Defense. Drag one of your players onto the CPU's ball handler to guard, double, or steal — then ▶ Next Step."
 
   return (
     <div className="cc">
@@ -472,7 +499,10 @@ export default function CourtClash() {
           <div className={`cc__shotclock ${state.shotClock <= 3 ? 'cc__shotclock--warn' : ''}`} aria-label={`Shot clock: ${state.shotClock} steps`}>
             {String(state.shotClock).padStart(2, '0')}
           </div>
-          <div className="cc__to">first to {WIN_TARGET}</div>
+          <div className="cc__meta">
+            <span className="cc__step" aria-label={`Step ${state.step}`}>step {state.step}</span>
+            <span className="cc__to">first to {WIN_TARGET}</span>
+          </div>
         </div>
         <div className={`cc__score ${!onOffense ? 'cc__score--live' : ''}`}>
           <span className="cc__score-label">CPU</span>
@@ -503,6 +533,8 @@ export default function CourtClash() {
         beatMs={beatMs}
         flash={flash}
         ballFlight={animating ? ballFlight : null}
+        ball={state.ball}
+        gather={state.gather}
         radial={radial}
         onPlayerTap={onPlayerTap}
         onCourtTap={onCourtTap}
@@ -535,12 +567,12 @@ export default function CourtClash() {
             type="button"
             className="cc-btn cc-btn--primary cc__run"
             onClick={() => {
-              game.runBeat()
+              game.runStep()
               if (coachStep >= 0) finishCoach()
             }}
             disabled={animating || state.phase !== 'play'}
           >
-            ▶ Next Beat
+            ▶ Next Step
           </button>
         </div>
       </div>

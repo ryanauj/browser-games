@@ -2,8 +2,8 @@ import { useRef, useState } from 'react'
 import { BASKET, COURT_H, COURT_W, LEAD_CATCH_RADIUS, RIM_RADIUS, SCREEN_RADIUS, THREE_PT_RADIUS, type Risk } from '../constants'
 import { GASSED_THRESHOLD } from '../constants'
 import { signatureAttr } from '../attributes'
-import { contestedStep, dist, leadCatch, reachOf, stepToward } from '../geometry'
-import type { Player, Side, Vec } from '../types'
+import { contestedStep, dist, leadCatch, reachOf, sprintTopOf, stepToward } from '../geometry'
+import type { Ball, Player, ShotGather, Side, Vec } from '../types'
 
 /** One choice in the post-drag radial menu. The first item is the primary. */
 export interface RadialItem {
@@ -42,14 +42,22 @@ export interface CourtProps {
   targetRisk: Record<string, Risk>
   /** Risk ring on your ball handler (shot quality), when on offense. */
   shooterRisk: Risk | null
-  /** True when a beat is animating (drives the glide timing class). */
+  /** True when a step is animating (drives the glide timing class). */
   animating: boolean
-  /** Current beat duration (ms) — sets the sprite glide duration to match speed. */
+  /** Current step duration (ms) — sets the sprite glide duration to match speed. */
   beatMs: number
   flash: { text: string; tone: Risk | 'neutral' } | null
-  /** Ball travel to animate for the beat just resolved (null = ball rests on the
-   *  handler). Only non-null while a beat is gliding. */
+  /** Ball travel to animate for the resolution step just resolved (catch/shot/
+   *  steal). Only non-null while a step is gliding. */
   ballFlight: BallFlight | null
+  /** A ball traveling on its own RIGHT NOW (Q18/Q31) — a pass mid-flight. Drawn as
+   *  a live token at its current spot with a faint from→to lane, gliding to the
+   *  next spot each step. While set, `ballHandlerId` is null (a valid in-air
+   *  state). null = the ball is held / not in flight. */
+  ball: Ball | null
+  /** A shot in its windup (Q17/Q33) — the shooter is rooted and gathering while
+   *  the defense can still close. null = no shot gathering. */
+  gather: ShotGather | null
   /** Open radial menu (drop point + contextual actions), if any. */
   radial: { at: Vec; items: RadialItem[] } | null
   onPlayerTap: (id: string) => void
@@ -78,6 +86,8 @@ export function Court(props: CourtProps) {
     beatMs,
     flash,
     ballFlight,
+    ball,
+    gather,
     radial,
     onPlayerTap,
     onCourtTap,
@@ -202,6 +212,29 @@ export function Court(props: CourtProps) {
     })
     .filter(Boolean) as { id: string; from: Vec; to: Vec; kind: string; dashed: boolean }[]
 
+  // MOTION TELEGRAPH (Q15). The ONLY committed-intent cue shown for BOTH sides:
+  // a player's tracked sprint speed/heading (`sprintSpeed`/`sprintDir`). You read
+  // the opponent purely from this observable motion — no opponent order lines.
+  // A streak trails each sprinter back along its heading; faster = longer/heavier
+  // (a fast committed drive bleeds the most ⇒ the highest bail cost ⇒ the most
+  // committed). A jog (no sprintSpeed) leaves no streak — that absence IS the
+  // jog-vs-sprint read.
+  const trails = players
+    .map((p) => {
+      const sp = p.sprintSpeed
+      const dir = p.sprintDir
+      if (!dir || sp < 1) return null
+      const frac = Math.min(1, sp / sprintTopOf(p))
+      // The streak spans the ground covered last step, drawn behind the player.
+      const tail = { x: p.pos.x - dir.x * sp, y: p.pos.y - dir.y * sp }
+      return { id: p.id, side: p.side, from: tail, to: p.pos, frac }
+    })
+    .filter(Boolean) as { id: string; side: Side; from: Vec; to: Vec; frac: number }[]
+
+  // A shot in its windup — telegraph an expanding "release" ring on the shooter so
+  // either side can read it (close it out on defense, hold steady on offense).
+  const gatherShooter = gather ? players.find((p) => p.id === gather.shooterId) : null
+
   return (
     <div
       className={`cc-court ${animating ? 'cc-court--anim' : ''}`}
@@ -248,6 +281,28 @@ export function Court(props: CourtProps) {
 
       {/* Route lines */}
       <svg className="cc-court__routes" viewBox={`0 0 ${COURT_W} ${COURT_H}`} preserveAspectRatio="none">
+        {/* Motion trails (Q15) — drawn first so they sit beneath the order lines.
+            Width + opacity scale with sprint speed; color reads team. */}
+        {trails.map((t) => (
+          <line
+            key={`tr-${t.id}`}
+            x1={t.from.x}
+            y1={t.from.y}
+            x2={t.to.x}
+            y2={t.to.y}
+            className={`cc-trail cc-trail--${t.side}${t.frac > 0.6 ? ' cc-trail--fast' : ''}`}
+            style={{ strokeWidth: 1.4 + t.frac * 3, opacity: 0.22 + t.frac * 0.5 }}
+          />
+        ))}
+        {/* Gather windup ring (Q17) — an expanding telegraph on the rooted shooter. */}
+        {gatherShooter && (
+          <circle
+            cx={gatherShooter.pos.x}
+            cy={gatherShooter.pos.y}
+            r={7}
+            className="cc-gather-ring"
+          />
+        )}
         {routes.map((r) => (
           <line
             key={r.id}
@@ -375,6 +430,30 @@ export function Court(props: CourtProps) {
         </div>
       )}
 
+      {/* The ball traveling on its own RIGHT NOW (Q18/Q31). A live token sitting at
+          the ball's current spot — it glides to the next spot each step (CSS
+          transition, like the sprites) and shows a faint from→to aim lane so the
+          throw is readable while it's in the air. Distinct from the resolution
+          ballFlight above (which animates a catch/shot/steal within one glide). */}
+      {ball && (
+        <>
+          <svg className="cc-court__routes" viewBox={`0 0 ${COURT_W} ${COURT_H}`} preserveAspectRatio="none">
+            <line
+              x1={ball.from.x}
+              y1={ball.from.y}
+              x2={ball.to.x}
+              y2={ball.to.y}
+              className={`cc-air-lane cc-air-lane--${ball.kind}`}
+            />
+          </svg>
+          <span
+            className="cc-liveball"
+            style={{ left: pct(ball.pos.x, COURT_W), top: pct(ball.pos.y, COURT_H), ['--cc-beat' as string]: `${beatMs}ms` }}
+            aria-hidden
+          />
+        </>
+      )}
+
       {/* Players */}
       {players.map((p) => {
         const isYours = p.side === yourSide
@@ -396,6 +475,16 @@ export function Court(props: CourtProps) {
         // The defender nearest a pass/steal lane in flight — lit up as the man
         // who could (or did) pick it off.
         const contestCls = ballFlight?.contestId === p.id ? ' cc-player--contest' : ''
+        // Motion legibility (Q15), shown for BOTH sides from observable speed: a
+        // sprinter reads "sprinting", a near-top committed drive reads "driving"
+        // (a heavier token). A jogging/idle player gets neither — the absence is
+        // the read.
+        const sprintFrac = p.sprintSpeed >= 1 ? Math.min(1, p.sprintSpeed / sprintTopOf(p)) : 0
+        const motionCls = sprintFrac > 0.6 ? ' cc-player--driving' : sprintFrac > 0 ? ' cc-player--sprinting' : ''
+        // Shot windup, loose handle, and a primed finish — readable risk/juice.
+        const gatherCls = gather?.shooterId === p.id ? ' cc-player--gather' : ''
+        const looseCls = p.bull > 0 ? ' cc-player--loose' : ''
+        const primedCls = p.primed > 0 ? ' cc-player--primed' : ''
         const sig = signatureAttr(p.attr)
         return (
           <button
@@ -403,7 +492,7 @@ export function Court(props: CourtProps) {
             key={p.id}
             className={`cc-player cc-player--${p.side}${isSel ? ' cc-player--sel' : ''}${
               hasBall ? ' cc-player--ball' : ''
-            }${gassed ? ' cc-player--gassed' : ''}${p.stuck > 0 ? ' cc-player--stuck' : ''}${screenCls}${ring}${targetCls}${contestCls}`}
+            }${gassed ? ' cc-player--gassed' : ''}${p.stuck > 0 ? ' cc-player--stuck' : ''}${screenCls}${ring}${targetCls}${contestCls}${motionCls}${gatherCls}${looseCls}${primedCls}`}
             style={{ left: pct(p.pos.x, COURT_W), top: pct(p.pos.y, COURT_H) }}
             onPointerDown={(e) => startDrag(e, p)}
           >
@@ -428,6 +517,16 @@ export function Court(props: CourtProps) {
             {p.stuck > 0 && (
               <span className="cc-player__stuck" title="Stuck on a screen" aria-hidden>
                 💥
+              </span>
+            )}
+            {gatherCls && (
+              <span className="cc-player__gather" title="Gathering for a shot — close out!" aria-hidden>
+                🎯
+              </span>
+            )}
+            {looseCls && !gatherCls && (
+              <span className="cc-player__loose" title="Loose handle — strip risk" aria-hidden>
+                〽️
               </span>
             )}
           </button>
