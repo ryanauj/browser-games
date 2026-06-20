@@ -129,6 +129,14 @@ export const SCREEN_STAT_WEIGHT = 1.6
 export const STUCK_FACTOR = 0.18
 /** A screener is freed (back to idle) after this many STEPS if it hasn't hit anyone. */
 export const SCREEN_HOLD_MAX = 10
+/** Planted STEPS (within SCREEN_RADIUS of the spot/marked body) a screener must
+ *  hold before the pick is "SET" and legal (Q19). Body contact before this — the
+ *  screener still moving INTO the defender — is a moving (illegal) screen. */
+export const SCREEN_SET_STEPS = 2
+/** Body-contact radius for the pick to actually impede / be a moving screen —
+ *  inside the wider SCREEN_RADIUS setup ring, so a screener gets a settling step
+ *  in the ring before contact (set it) instead of barrelling straight in (foul). */
+export const SCREEN_CONTACT = 6
 
 // --- Bodies take up space ---------------------------------------------------
 /** Min distance (floor units) between any two players after a beat resolves — no
@@ -305,9 +313,21 @@ export const PASS_LANE_RADIUS = 8
 export const STRIP_BASE = 0.05
 export const STRIP_STAT_WEIGHT = 0.24
 
-/** Steal-gamble order: reward and the cost of missing (defender out of play). */
+/** Steal-gamble order (Q20): a defender lunges for the strip. Base reward + a big
+ *  bonus vs a LOOSE handle (a handler whose ball is exposed from bulling a body,
+ *  `Player.bull`), composed with the collision output rather than re-derived. */
 export const GAMBLE_STEAL_BASE = 0.18
 export const GAMBLE_STEAL_STAT_WEIGHT = 0.3
+/** Added to the gamble vs a loose/bulled handle — the strip is far likelier when
+ *  the ball is already exposed. */
+export const GAMBLE_STEAL_LOOSE_BONUS = 0.24
+/** Cost of a MISSED gamble (Q20): the defender lunged and got beaten. He
+ *  over-commits this many floor units toward where the ball was (out of the play)…
+ */
+export const GAMBLE_MISS_LUNGE = 4
+/** …and is slowed (STUCK) this many steps recovering — handing the offense a real
+ *  step of separation for the failed reach-in. */
+export const GAMBLE_MISS_STUCK = 3
 
 /** Offensive rebound chance on a miss (defense rebounds otherwise). */
 export const OREB_BASE = 0.26
