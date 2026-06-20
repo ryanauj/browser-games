@@ -6,7 +6,7 @@
 
 ## What this is
 Court Clash: a turn-based, half-court 5v5 basketball game (you coach one team).
-A possession advances **beat by beat** — you set orders, then tap **Next Beat**.
+A possession advances **step by step** — you set orders, then tap **Next Step**.
 Pure deterministic reducer + a seeded RNG so games replay exactly.
 
 Key files (`src/games/courtClash/`): `engine.ts` (sim/reducer), `ai.ts` (CPU

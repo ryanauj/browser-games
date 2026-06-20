@@ -5,21 +5,23 @@ import { captureFrame, type DebugFrame, type DebugLog } from './debug'
 import type { Action, Order } from './types'
 
 /**
- * Owns the reducer plus the per-beat animation window and the debug log (seed +
- * every action for exact replay, and a compact snapshot per beat).
+ * Owns the reducer plus the per-step animation window and the debug log (seed +
+ * every action for exact replay, and a compact snapshot per step).
  *
- * The game is turn-based by beat: you set orders, then advance ONE beat at a
- * time (runBeat / callShot). Each advance opens a short animation window during
- * which sprites glide to their new spots — then everything settles and nothing
- * moves until you advance again. There is no clock: the floor only changes when
- * you say so.
+ * The game is turn-based by STEP (Q10/Q11 — tap per step): between steps you set
+ * any subset of your five's orders, then advance ONE step at a time (runStep /
+ * callShot). Each advance opens a short animation window during which sprites
+ * glide to their new spots — then everything settles and nothing moves until you
+ * advance again. Untouched players continue toward their target then hold (Q12),
+ * so a committed sprint keeps building speed without re-tapping. BEAT_MS survives
+ * only as that glide duration, not as a unit of game time.
  */
 export function useCourtClash() {
   const [state, dispatch] = useReducer(reducer, undefined, () => createInitialState())
   const [pulsing, setPulsing] = useState(false)
   const timer = useRef<number | null>(null)
 
-  // One beat's worth of glide; also drives the --cc-beat CSS transition.
+  // One step's worth of glide; also drives the --cc-beat CSS transition.
   const beatMs = BEAT_MS
 
   const actionsRef = useRef<Action[]>([])
@@ -66,9 +68,9 @@ export function useCourtClash() {
     [record],
   )
 
-  // Advance exactly one beat. Ignored while a beat is still gliding so you can't
-  // accidentally double-step.
-  const runBeat = useCallback(() => {
+  // Advance exactly one step (Q11 tap-per-step). Ignored while a step is still
+  // gliding so you can't accidentally double-step.
+  const runStep = useCallback(() => {
     if (state.phase !== 'play' || pulsing) return
     pulse()
     const a: Action = { type: 'RUN_STEP' }
@@ -103,7 +105,7 @@ export function useCourtClash() {
     animating,
     beatMs,
     setOrder,
-    runBeat,
+    runStep,
     callShot,
     newGame,
     getDebug,
