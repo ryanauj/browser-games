@@ -152,6 +152,19 @@
   letter-spacing: 0.1em;
   color: var(--cc-dim);
 }
+.cc__meta {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  justify-content: center;
+}
+.cc__step {
+  font-size: 0.62rem;
+  letter-spacing: 0.1em;
+  color: var(--cc-dim);
+  font-variant-numeric: tabular-nums;
+  text-transform: uppercase;
+}
 @keyframes cc-pulse {
   50% {
     opacity: 0.4;
@@ -445,6 +458,78 @@
   }
 }
 
+/* Motion trails (Q15) — the telegraph. A streak behind every SPRINTING player
+   (both teams), back along its committed heading; width/opacity scale with speed
+   (set inline). This is how you READ the opponent — you never see their order
+   lines, only how fast/committed they're moving. A jog leaves no streak. */
+.cc-trail {
+  fill: none;
+  stroke-linecap: round;
+}
+.cc-trail--player {
+  stroke: var(--cc-you);
+}
+.cc-trail--ai {
+  stroke: var(--cc-cpu);
+}
+/* A near-top-speed (committed) sprinter burns hot — a brighter streak reads as
+   "fully committed / freight-train", the costliest to bail. */
+.cc-trail--player.cc-trail--fast {
+  stroke: #add6ff;
+}
+.cc-trail--ai.cc-trail--fast {
+  stroke: #ffb0bb;
+}
+
+/* Gather windup (Q17) — an expanding ring on the rooted shooter telegraphing the
+   release, so the defense knows to close out and the offense to hold steady. */
+.cc-gather-ring {
+  fill: none;
+  stroke: var(--cc-orange);
+  stroke-width: 0.8;
+  animation: cc-gather 0.85s ease-out infinite;
+}
+@keyframes cc-gather {
+  0% {
+    r: 2;
+    opacity: 0.9;
+  }
+  100% {
+    r: 11;
+    opacity: 0;
+  }
+}
+
+/* A ball traveling on its own right now (Q18/Q31). The faint dashed lane is its
+   from→to aim; the token sits at its current spot and glides to the next each
+   step (CSS transition, matching the sprites). */
+.cc-air-lane {
+  fill: none;
+  stroke-linecap: round;
+  stroke-width: 0.8;
+  stroke-dasharray: 1.5 2.5;
+  opacity: 0.5;
+}
+.cc-air-lane--pass {
+  stroke: var(--cc-good);
+}
+.cc-air-lane--shot {
+  stroke: var(--cc-orange);
+}
+.cc-liveball {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 35% 30%, #ffe0b0, var(--cc-orange) 70%);
+  border: 2px solid #2a1a06;
+  box-shadow: 0 0 10px var(--cc-orange);
+  pointer-events: none;
+  z-index: 5;
+  transition: left var(--cc-beat, 420ms) linear, top var(--cc-beat, 420ms) linear;
+}
+
 /* Pass/steal/turnover lane drawn while the ball flies, so you read the throw and
    the man near it. */
 .cc-pass-lane {
@@ -559,6 +644,58 @@
 }
 .cc-player--gassed {
   filter: saturate(0.5) brightness(0.85);
+}
+/* Motion legibility on the token itself (Q15), shown for BOTH teams. A sprinting
+   man wears a faint motion halo; a near-top committed drive reads HEAVY — a
+   bigger, dark-ringed token (weight + momentum). Pseudo-element rings so they
+   never fight the box-shadow/filter rings (selection, risk, screen, gassed). */
+.cc-player--sprinting::after,
+.cc-player--driving::after {
+  content: '';
+  position: absolute;
+  border-radius: 50%;
+  pointer-events: none;
+}
+.cc-player--sprinting::after {
+  inset: -3px;
+  border: 1.5px solid rgba(255, 255, 255, 0.28);
+}
+.cc-player--driving::after {
+  inset: -5px;
+  border: 2.5px solid rgba(0, 0, 0, 0.5);
+}
+.cc-player--driving {
+  transform: translate(-50%, -50%) scale(1.12);
+}
+/* A primed finish (post-drive boost) — a warm glow that doesn't touch box-shadow. */
+.cc-player--primed::before {
+  content: '';
+  position: absolute;
+  inset: -4px;
+  border-radius: 50%;
+  box-shadow: 0 0 10px 2px rgba(240, 138, 36, 0.6);
+  pointer-events: none;
+}
+/* A shooter in their windup, and a loose-handle warning badge. */
+.cc-player__gather {
+  position: absolute;
+  top: -12px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 13px;
+  line-height: 1;
+  pointer-events: none;
+  animation: cc-pulse 0.7s infinite;
+  filter: drop-shadow(0 0 3px rgba(0, 0, 0, 0.8));
+}
+.cc-player__loose {
+  position: absolute;
+  top: -10px;
+  right: -8px;
+  font-size: 13px;
+  line-height: 1;
+  pointer-events: none;
+  filter: drop-shadow(0 0 3px rgba(0, 0, 0, 0.8));
 }
 .cc-player--target {
   box-shadow: 0 0 0 3px var(--cc-orange), 0 0 14px rgba(240, 138, 36, 0.6);
