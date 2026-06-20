@@ -16,7 +16,10 @@ import {
   GATHER_BASE,
   GATHER_MIN,
   GATHER_RELIEF,
+  GAMBLE_MISS_LUNGE,
+  GAMBLE_MISS_STUCK,
   GAMBLE_STEAL_BASE,
+  GAMBLE_STEAL_LOOSE_BONUS,
   GAMBLE_STEAL_STAT_WEIGHT,
   GASSED_THRESHOLD,
   HOLD_EPS,
@@ -1032,14 +1035,30 @@ function runStep(state: GameState, playerShootId?: string): GameState {
       (d) => d.side !== handler.side && d.order.kind === 'steal' && dist(d.pos, handler.pos) <= 8,
     )
     if (gambler) {
+      // Positional gamble (Q20): a defender lunges for the strip. The reach-in is
+      // far likelier vs a LOOSE handle — the ball already exposed from a bull this
+      // step (`handler.bull`, set by driveCollision; composed, not re-derived).
+      const loose = handler.bull > 0
       const p = clampP(
-        GAMBLE_STEAL_BASE + (statN(gambler.attr.perimeterD) - statN(handler.attr.handle)) * GAMBLE_STEAL_STAT_WEIGHT,
+        GAMBLE_STEAL_BASE +
+          (statN(gambler.attr.perimeterD) - statN(handler.attr.handle)) * GAMBLE_STEAL_STAT_WEIGHT +
+          (loose ? GAMBLE_STEAL_LOOSE_BONUS : 0),
       )
       if (r.roll(p)) {
         events.push({ kind: 'steal', by: gambler.id, from: handler.pos, to: { ...gambler.pos }, text: `${gambler.name} strips it!` })
         log = pushLog(log, `🧤 ${gambler.name} gambles and gets it!`)
         return setupPossession({ ...state, players, rngState: r.next, events, log }, gambler.side, SHOT_CLOCK_STEPS, log)
       }
+      // MISS: the gambler is BEATEN. He over-commits toward where the ball was
+      // (out of the play) and is slowed recovering — the offense gets a real step
+      // of separation for the failed reach-in. Positional cost, deterministic.
+      const lunge = unitTo(gambler.pos, handler.pos)
+      if (lunge) {
+        gambler.pos = clampToCourt({ x: gambler.pos.x + lunge.x * GAMBLE_MISS_LUNGE, y: gambler.pos.y + lunge.y * GAMBLE_MISS_LUNGE })
+      }
+      gambler.stuck = Math.max(gambler.stuck, GAMBLE_MISS_STUCK)
+      events.push({ kind: 'stall', by: gambler.id, from: { ...gambler.pos }, text: `${gambler.name} lunges and misses!` })
+      log = pushLog(log, `↗️ ${gambler.name} gambles and gets beaten — ${handler.name} blows by.`)
     }
     if (handler.order.kind === 'drive') {
       const onBall = players.find((d) => d.side !== handler.side && dist(d.pos, handler.pos) <= 6)

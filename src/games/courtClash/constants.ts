@@ -313,9 +313,21 @@ export const PASS_LANE_RADIUS = 8
 export const STRIP_BASE = 0.05
 export const STRIP_STAT_WEIGHT = 0.24
 
-/** Steal-gamble order: reward and the cost of missing (defender out of play). */
+/** Steal-gamble order (Q20): a defender lunges for the strip. Base reward + a big
+ *  bonus vs a LOOSE handle (a handler whose ball is exposed from bulling a body,
+ *  `Player.bull`), composed with the collision output rather than re-derived. */
 export const GAMBLE_STEAL_BASE = 0.18
 export const GAMBLE_STEAL_STAT_WEIGHT = 0.3
+/** Added to the gamble vs a loose/bulled handle — the strip is far likelier when
+ *  the ball is already exposed. */
+export const GAMBLE_STEAL_LOOSE_BONUS = 0.24
+/** Cost of a MISSED gamble (Q20): the defender lunged and got beaten. He
+ *  over-commits this many floor units toward where the ball was (out of the play)…
+ */
+export const GAMBLE_MISS_LUNGE = 4
+/** …and is slowed (STUCK) this many steps recovering — handing the offense a real
+ *  step of separation for the failed reach-in. */
+export const GAMBLE_MISS_STUCK = 3
 
 /** Offensive rebound chance on a miss (defense rebounds otherwise). */
 export const OREB_BASE = 0.26
