@@ -928,6 +928,96 @@ the strip rate or the offense.]**
   the *clog* artifact (a passive body that merely shortens a possession by being
   in the way). The earlier inversion was the clog; the −47% is the contest.
 
+## Plan-ahead mode (multi-step planning + auto-run) — FUTURE EPIC
+
+Each team can plan several steps ahead; with plans set the game auto-advances
+(no manual Next-Step tap) and only halts when someone needs a decision. This is
+mostly an **execution/UX layer** on the existing persistent-order + sprint-route
+model (Q3/Q12) + the committed-intent AI (Q25) — *not* a new engine. Hard
+constraints carry over: the reducer stays pure/deterministic (an auto-run is just
+N replayable steps; the queue is serialized state), and you still can't see the
+opponent's queue — own-orders-only telegraph (Q15), infer from motion.
+
+**Scope:** a real epic, biggest feature since the core rework — touches engine
+(queue state + auto-run loop), AI (multi-step committed plans + per-side halt
+granularity), UI (queue authoring + visualization + control modes). Sequence it
+AFTER balance lock-in / UX polish / kick-out help rotation; give it its own
+session sequence + checkpoint like the rework.
+
+**Open/deferred:** the concrete salient-event set (tuning); unbounded horizon
+(future); legible own-side visualization of a multi-action queue.
+
+### Q42 — What is a player's "queued plan" made of?
+**[CHOSEN: explicit, serialized per-player QUEUE of chained orders]**
+- Each player holds a queue of several chained orders (move/cut/drive/screen/pass)
+  authored ahead; auto-run consumes it; "still has a move queued" = queue non-empty.
+- *In-progress order (reuse standing orders)* — a player "has a move" while their
+  current order/sprint-route is still executing; halt on arrival/idle. No new state,
+  cheapest, determinism-trivial — but one action at a time, no pre-chained
+  sequences. Rejected: doesn't deliver true "plan several steps ahead."
+- *Multi-waypoint route* — one movement plan with several path points; chains
+  positions, not action-types. Rejected as the middle option; the queue subsumes it.
+
+### Q43 — Auto-run halt granularity (per-side configurable)
+**[CHOSEN: a side's decision point = "its committed plan ends/breaks" by DEFAULT;
+each side independently toggleable to ALSO halt on its own salient events. Default
+both human + AI = committed-plan-end only.]**
+- This unifies the round-1 halt policy ("plan-out + salient events") with the AI
+  cadence question into ONE per-side knob. Coarse default (plan-end) is what keeps
+  "either-side" halting (Q44) from stopping the run nearly every step against a
+  reactive AI — the AI already commits multi-step intents (Q25), so it only reaches
+  a decision point when that intent completes/breaks.
+- Salient events (your shot opens, handler stripped/contested, loose ball, your man
+  beats you) are the OPT-IN tier per side; the concrete set is a later tuning detail.
+- *Plan-out only (no events, ever)* — rejected as the forced default: can auto-run a
+  player into a changed situation (dribble into a steal) before you react; kept as
+  the toggle's "off" state.
+- *Aggressive event-driven (rollout-divergence)* — rejected: smartest but hardest to
+  make legible/tunable/deterministic.
+
+### Q44 — Whose plan-exhaustion halts the shared (simultaneous) auto-run?
+**[CHOSEN: EITHER side's decision point halts it]**
+- Most synchronized: you never auto-run past a moment the opponent chose to act on.
+  Viable only because Q43's default makes the AI's decision points coarse.
+- *Only yours* — cleanest single-player feel (fast-forward your plan, AI feeds
+  silently), but you can blow past an opponent action; set aside in favor of the
+  synchronized feel + coarse AI cadence.
+- *Fixed horizon cap* — a safety pause every N steps; may still layer on as a guard.
+
+### Q45 — How far ahead can a queue go?
+**[CHOSEN: capped to the current shot clock, for now]**
+- Bounded → legible, cheap to replay, AI-symmetric.
+- *Unbounded (whole possession)* — flagged as a possible FUTURE extension; set aside
+  now (messy to author/read, easy to waste on stale info).
+- *A few actions (~2–3)* — simpler still; rejected as too limiting vs the queue goal.
+
+### Q46 — Authoring a chained queue
+**[CHOSEN: hybrid — drag the movement path, tap along it to insert/annotate actions]**
+- Drag lays the route; taps insert non-move actions (cut/screen/shoot/pass) at points
+  on it. Explicit about where each action fires; builds on existing drag + sprint-
+  route + radial.
+- *Drag path + action markers (all in the drag)* — richest/most fluid; set aside as
+  slightly less explicit about action placement.
+- *Sequential tap-place* — fully step-wise/legible but slow and clicky; rejected.
+
+### Q47 — When a salient event halts mid-queue, what happens to the plan?
+**[CHOSEN: keep it — resume after you act]**
+- The event pauses; untouched queues resume from where they were; editing a player
+  pauses the run and replans just that player (others intact). Editing a queued
+  sprint mid-flight pays the in-engine angle×speed redirect cost (Q5); otherwise
+  free re-plan (Q24).
+- *Flush the interrupted player only* / *flush whole team* — rejected: more clicking,
+  more re-work; "keep + resume" is the smoothest flow.
+
+### Q48 — Control: how is auto-run engaged?
+**[CHOSEN: a toggle between (a) always-on auto-advance with manual stop and (b)
+opt-in fast-forward; DEFAULT always-on]**
+- Always-on: once plans are set it auto-advances; stop via a button or by dragging
+  to edit (leans on Q43 to not run away). Opt-in: press/hold to fast-forward a
+  planned stretch, any input returns to tap-per-step.
+- *Auto-run, pause on every contact* — rejected: safest but stops constantly in a
+  crowded half-court.
+
 ## Variation ideas to try later (compare/combine)
 
 - Accel ramp (Q4) **+** engine-internal chaining (Q3 alt) as a low-risk first
