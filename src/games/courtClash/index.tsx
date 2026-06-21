@@ -17,10 +17,12 @@ const COACHED_KEY = 'courtclash-coached'
 /** First-run, learn-by-doing nudges — advance as the player actually acts. The
  *  first beat points at the ball handler (the glowing 🏀 token) so a newcomer
  *  knows who to act on; only tapping THAT player advances, so a stray tap on an
- *  off-ball teammate doesn't burn the intro. */
+ *  off-ball teammate doesn't burn the intro. The second beat then points down at
+ *  the action bar that just opened — one concrete next instruction, plus the only
+ *  in-flow definition of a "step" (otherwise buried in the Help modal). */
 const COACH_STEPS = [
   '👋 You\'re on offense. The glowing 🏀 token is your ball handler — tap them (or drag) to give the first order.',
-  '👍 Set orders for any of your five (they stick until you change them), then press ▶ Next Step to advance one step.',
+  '👇 Now pick one of the actions below for this player. (A "step" = one simultaneous move by all players; ▶ Next Step plays it out.)',
 ]
 const YOU: Side = 'player'
 /** Floor-unit radius for treating overlapping sprites as a tappable stack. */
@@ -169,9 +171,14 @@ export default function CourtClash() {
 
   // First-run coach: advance from "find the ball handler" once they've actually
   // selected the handler the beat points at — a stray tap on an off-ball teammate
-  // (or empty floor) leaves the intro up rather than burning it.
+  // (or empty floor) leaves the intro up rather than burning it. The same tap that
+  // selects the handler also opens the action bar, so hold the step-2 banner back a
+  // beat: let the actions land first, then the nudge reads as the next instruction
+  // rather than popping in lockstep with (and competing against) the bar.
   useEffect(() => {
-    if (coachStep === 0 && selectedId && selectedId === state.ballHandlerId) setCoachStep(1)
+    if (coachStep !== 0 || !selectedId || selectedId !== state.ballHandlerId) return
+    const t = window.setTimeout(() => setCoachStep(1), 450)
+    return () => window.clearTimeout(t)
   }, [coachStep, selectedId, state.ballHandlerId])
 
   // Surface the latest beat event as a brief flash.
