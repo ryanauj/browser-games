@@ -451,6 +451,9 @@ export default function CourtClash() {
     const id = selected.id
     // `mode` tags movement actions slow-nimble (jog) vs fast-committed (sprint) so
     // the central decision is legible on the buttons, not just buried in Help.
+    // Sprint drops off the menu only when the player is too gassed to honor it
+    // (mirrors the drag radial — see onDragRelease).
+    const canSprint = selected.stamina >= SPRINT_FLOOR
     const list: { label: string; run: () => void; sub?: string; mode?: 'jog' | 'sprint' }[] = []
     if (onOffense) {
       if (id === state.ballHandlerId) {
@@ -459,9 +462,9 @@ export default function CourtClash() {
           label: 'Pass →',
           run: () => setPending({ playerId: id, need: 'teammate', make: (t) => ({ kind: 'pass', toId: t }), hint: 'Pick a teammate to pass to.', risk: 'pass' }),
         })
-        list.push({ label: 'Sprint', sub: 'fast, committed', mode: 'sprint', run: () => issue(id, { kind: 'drive', to: reachClamp(id, BASKET, true) }) })
+        if (canSprint) list.push({ label: 'Sprint', sub: 'fast, committed', mode: 'sprint', run: () => issue(id, { kind: 'drive', to: reachClamp(id, BASKET, true) }) })
       } else {
-        list.push({ label: 'Sprint', sub: 'fast, committed', mode: 'sprint', run: () => issue(id, { kind: 'cut', to: reachClamp(id, BASKET, true) }) })
+        if (canSprint) list.push({ label: 'Sprint', sub: 'fast, committed', mode: 'sprint', run: () => issue(id, { kind: 'cut', to: reachClamp(id, BASKET, true) }) })
         list.push({
           label: 'Move →',
           sub: 'slow, nimble',
@@ -495,12 +498,14 @@ export default function CourtClash() {
         mode: 'jog',
         run: () => setPending({ playerId: id, need: 'point', make: (pt) => ({ kind: 'help', to: pt }), hint: 'Tap a spot within reach.', clampReach: true }),
       })
-      list.push({
-        label: 'Sprint →',
-        sub: 'fast, committed cutoff',
-        mode: 'sprint',
-        run: () => setPending({ playerId: id, need: 'point', make: (pt) => ({ kind: 'help', to: pt, mode: 'sprint' }), hint: 'Tap a spot to sprint and cut off.', clampReach: true }),
-      })
+      if (canSprint) {
+        list.push({
+          label: 'Sprint →',
+          sub: 'fast, committed cutoff',
+          mode: 'sprint',
+          run: () => setPending({ playerId: id, need: 'point', make: (pt) => ({ kind: 'help', to: pt, mode: 'sprint' }), hint: 'Tap a spot to sprint and cut off.', clampReach: true }),
+        })
+      }
     }
     return list
   }, [selected, onOffense, state.ballHandlerId, game])
