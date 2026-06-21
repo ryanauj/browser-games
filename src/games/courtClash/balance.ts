@@ -12,7 +12,7 @@
 import { createInitialState, reducer, shotMakeChance } from './engine'
 import { shotType } from './geometry'
 import { aiPlan } from './ai'
-import type { GameState, Player, Side } from './types'
+import type { GameState, Player, Side, Vec } from './types'
 
 const GAMES = 60
 // Steps per game cap — a possession is now ~40-60 steps (Q10), ~3.5× the old
@@ -66,23 +66,61 @@ const note = (t: Tally, s: GameState) => {
   }
 }
 
+/** Spread spots at half-court (y≈98) — far from the rim at y≈9, beyond every
+ *  contest radius (OPEN_DISTANCE 14, CONTEST_RADIUS 11, PASS_INTERCEPT_RADIUS,
+ *  COLLIDE_RADIUS, …). Used to PARK the player's five for the true no-defense
+ *  counterfactual (Fix 3). */
+const PARK_SPOTS: Vec[] = [
+  { x: 10, y: 98 },
+  { x: 30, y: 98 },
+  { x: 50, y: 98 },
+  { x: 70, y: 98 },
+  { x: 90, y: 98 },
+]
+
+/** Remove `side`'s five from the play: park them at half-court, idle, with no
+ *  momentum, so they cannot contest, block, strip, or intercept — a genuinely
+ *  OPEN floor for the offense. Mutates the harness state only (never the reducer):
+ *  this is the test scaffolding the honest defense-matters baseline needs (Fix 3),
+ *  not a rule change. The reducer's setupPossession re-seats them goal-side at each
+ *  possession, so this is re-applied every step the measured side is on defense. */
+function parkDefenders(s: GameState, side: Side): void {
+  let i = 0
+  for (const p of s.players) {
+    if (p.side !== side) continue
+    p.pos = { ...PARK_SPOTS[i % PARK_SPOTS.length] }
+    p.order = { kind: 'idle' }
+    p.sprintSpeed = 0
+    p.sprintDir = null
+    i++
+  }
+}
+
 /** One self-play beat: set the offense's orders (and shoot if it wants), let the
  *  engine handle the defense's AI internally. `playerPolicy` lets us swap how
- *  the player side behaves for the defense-matters experiment. */
+ *  the player side behaves for the defense-matters experiment:
+ *   - 'ai':   the player plays full CPU defense (the guarded run).
+ *   - 'open': a TRUE no-defense counterfactual — whenever the AI is on offense the
+ *     player's five are parked at half-court (removed from the play), so the AI
+ *     attacks open floor. (Replaces the old 'idle', which left the five sitting
+ *     goal-side in their start spots — still clogging lanes and the paint, so it
+ *     was "passive defense," not "no defense," and made guarding look like it
+ *     RAISED AI scoring. Fix 3.) */
 function selfPlayStep(
   s: GameState,
-  playerPolicy: 'ai' | 'idle' = 'ai',
+  playerPolicy: 'ai' | 'open' = 'ai',
 ): GameState {
-  // Player-side orders every beat (offense or defense).
   if (playerPolicy === 'ai') {
     const pplan = aiPlan(s, 'player')
     for (const o of pplan.orders) s = reducer(s, { type: 'SET_ORDER', playerId: o.playerId, order: o.order })
     if (s.offense === 'player' && pplan.shoot) return reducer(s, { type: 'CALL_SHOT', playerId: pplan.shoot })
+  } else if (s.offense === 'ai') {
+    parkDefenders(s, 'player') // no-defense baseline: clear the floor for the AI
   }
   return reducer(s, { type: 'RUN_STEP' })
 }
 
-function playGame(seed: number, playerPolicy: 'ai' | 'idle' = 'ai') {
+function playGame(seed: number, playerPolicy: 'ai' | 'open' = 'ai') {
   let s = createInitialState(seed)
   const by: Record<Side, Tally> = { player: emptyTally(), ai: emptyTally() }
   // Distinct possession indices each side spent on offense — so points can be
@@ -90,9 +128,10 @@ function playGame(seed: number, playerPolicy: 'ai' | 'idle' = 'ai') {
   // e.g. an idle side cycles the ball back fast and inflates the opponent's tally).
   const offPoss: Record<Side, Set<number>> = { player: new Set(), ai: new Set() }
   // Points the AI scored on each of its OWN offensive possessions, IN ORDER. The
-  // defense-matters metric reads the first N of these so the guard/idle compare is
-  // over equal possession samples (an idle game runs far longer — player scores 0
-  // — and would otherwise pile up garbage-time trips that swamp the average).
+  // defense-matters metric reads the first N of these so the guard/no-defense
+  // compare is over equal possession samples (the two runs differ in length —
+  // against no defense the AI scores fast and the player scores 0 — so this avoids
+  // garbage-time trips swamping the average).
   const aiPossPts: number[] = []
   let lastAiPoss = -1
   let prevAiScore = s.score.ai
@@ -169,54 +208,62 @@ function main() {
   console.log(`  pace:  ${f1(stepsTot / GAMES)} steps/game,  ${f1(poss / GAMES)} possessions,  ${f1(pts / poss)} pts/possession`)
   console.log(`  stamina at game end:  avg ${f1(avgStaTot / GAMES)}  min ${f1(minStaTot / GAMES)}`)
 
-  // --- Does player defense change AI scoring? guarding (CPU) vs idle, same seeds ---
+  // --- Does player defense change AI scoring? guarding (CPU) vs a TRUE no-defense
+  //     baseline (the player's five removed from the play), same seeds ---
   //
-  // The honest comparison is pts/possession over EQUAL possession samples. A naive
-  // "total AI pts / total AI poss" is doubly confounded: (a) an idle game never
-  // ends (the player scores 0), so it runs to STEP_CAP and the AI piles up ~5×
-  // the possessions of a guarded game that reaches 15 and stops; (b) those extra
-  // trips are garbage-time, dragging the idle average down. So for each seed we
-  // take the FIRST N AI offensive possessions of BOTH runs, where N = the shorter
-  // run's AI-possession count — same sample size, no blowup, no garbage tail.
+  // Fix 3: the baseline is now OPEN FLOOR, not "idle." The old idle run left the
+  // five sitting goal-side in their start spots — still in passing lanes and
+  // clogging the paint — so the offense scored LESS against those passive bodies
+  // than against a spread man, making guarding look like it RAISED AI efficiency.
+  // The honest counterfactual is "no defender there at all": parkDefenders sends
+  // the player's five to half-court so the AI attacks genuinely open floor.
+  //
+  // The comparison is pts/possession over EQUAL possession samples. A naive
+  // "total AI pts / total AI poss" is doubly confounded: (a) the no-defense game
+  // ends fast (the AI scores at will) while the player scores 0, so the two runs
+  // have very different lengths; (b) garbage-time trips skew the averages. So for
+  // each seed we take the FIRST N AI offensive possessions of BOTH runs, where
+  // N = the shorter run's AI-possession count — same sample size, no garbage tail.
   let guardPts = 0
   let guardPossN = 0
-  let idlePts = 0
-  let idlePossN = 0
+  let openPts = 0
+  let openPossN = 0
   let guardShots = 0
   let guardMakes = 0
-  let idleShots = 0
-  let idleMakes = 0
+  let openShots = 0
+  let openMakes = 0
   let guardTotPoss = 0
-  let idleTotPoss = 0
+  let openTotPoss = 0
   for (let i = 0; i < GAMES; i++) {
     const guard = playGame(7000 + i, 'ai')
-    const idle = playGame(7000 + i, 'idle')
-    const n = Math.min(guard.aiPossPts.length, idle.aiPossPts.length)
+    const open = playGame(7000 + i, 'open')
+    const n = Math.min(guard.aiPossPts.length, open.aiPossPts.length)
     for (let k = 0; k < n; k++) {
       guardPts += guard.aiPossPts[k]
-      idlePts += idle.aiPossPts[k]
+      openPts += open.aiPossPts[k]
     }
     guardPossN += n
-    idlePossN += n
+    openPossN += n
     guardShots += guard.by.ai.shots
     guardMakes += guard.by.ai.makes
-    idleShots += idle.by.ai.shots
-    idleMakes += idle.by.ai.makes
+    openShots += open.by.ai.shots
+    openMakes += open.by.ai.makes
     guardTotPoss += guard.offPoss.ai
-    idleTotPoss += idle.offPoss.ai
+    openTotPoss += open.offPoss.ai
   }
   const guardPP = guardPts / Math.max(1, guardPossN)
-  const idlePP = idlePts / Math.max(1, idlePossN)
-  // Effect = signed pts/poss swing from guarding, as a fraction of the larger of
-  // the two rates — bounded to [-100%, +100%] so it can never print a nonsense
-  // −625%. Positive = guarding RAISES AI scoring (the surprising case); negative
-  // = guarding suppresses it (defense working as you'd expect).
-  const effect = ((guardPP - idlePP) / Math.max(0.001, guardPP, idlePP)) * 100
+  const openPP = openPts / Math.max(1, openPossN)
+  // Effect = signed pts/poss swing from guarding vs open floor, as a fraction of
+  // the larger of the two rates — bounded to [-100%, +100%]. NEGATIVE = guarding
+  // suppresses AI scoring vs open floor (defense working, as you'd expect);
+  // positive = guarding somehow RAISES it (the cutoff isn't biting — a real
+  // finding to surface, not paper over).
+  const effect = ((guardPP - openPP) / Math.max(0.001, guardPP, openPP)) * 100
   console.log(`\n=== Does player defense matter? (AI offense, same ${GAMES} seeds, first-N equal poss) ===`)
-  console.log(`  player GUARDS:  ${f1(guardPP)} pts/poss over ${guardPossN} sampled poss  (FG% ${pct(guardMakes, guardShots)})`)
-  console.log(`  player IDLE:    ${f1(idlePP)} pts/poss over ${idlePossN} sampled poss  (FG% ${pct(idleMakes, idleShots)})`)
-  console.log(`  => defense effect: ${f1(effect)}%  (${effect >= 0 ? 'guarding RAISES AI pts/poss — defense NOT suppressing' : 'guarding lowers AI pts/poss — defense working'})`)
-  console.log(`     (possession blowup, for reference: AI got ${f1(idleTotPoss / GAMES)} poss/game idle vs ${f1(guardTotPoss / GAMES)} guarded)`)
+  console.log(`  player GUARDS:     ${f1(guardPP)} pts/poss over ${guardPossN} sampled poss  (FG% ${pct(guardMakes, guardShots)})`)
+  console.log(`  player NO DEFENSE: ${f1(openPP)} pts/poss over ${openPossN} sampled poss  (FG% ${pct(openMakes, openShots)})   [open floor — five parked at half-court]`)
+  console.log(`  => defense effect: ${f1(effect)}%  (${effect <= 0 ? 'guarding SUPPRESSES AI pts/poss vs open floor — defense working' : 'guarding RAISES AI pts/poss vs open floor — defense NOT biting'})`)
+  console.log(`     (for reference: AI got ${f1(openTotPoss / GAMES)} poss/game vs no defense vs ${f1(guardTotPoss / GAMES)} guarded)`)
 }
 
 main()
