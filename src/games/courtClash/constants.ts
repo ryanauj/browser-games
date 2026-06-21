@@ -110,7 +110,7 @@ export const STAMINA_REACH_MIN = 0.5
 export const SPRINT_FLOOR = 10
 /** A ball handler who drove into the finish gets this added to their next shot's
  *  make chance — downhill momentum into the finish. Consumed by the shot. */
-export const DRIVE_FINISH_BONUS = 0.12
+export const DRIVE_FINISH_BONUS = 0.05
 
 // ---------------------------------------------------------------------------
 // Screens. A planted screen bumps any defender who runs through it, sticking
@@ -172,9 +172,12 @@ export const COLLIDE_RADIUS = 4.5
  *  LOWEST exactly when it should be highest; the tracked speed fixes that. */
 export const COLLIDE_BULL_MOMENTUM = 0.1
 /** A fully SET defender (zero motion this step) adds this much to his anchor
- *  mass — enough that a planted man stuffs an even-strength, full-speed drive,
- *  while a defender on the move gives way. */
-export const SET_ANCHOR_BONUS = 1.1
+ *  mass — enough that a planted man STUFFS an even-strength, full-speed drive
+ *  (the bull becomes a strength/speed-edge play, not the default), while a
+ *  defender on the move gives way. Tuned vs the avg full-speed bull push ≈ 2.105
+ *  (mass 1.0 + 0.1×sprintTop 11.05): a set avg anchor of 1.0 + 1.3 = 2.30 stops
+ *  it, and only a real mass/momentum edge gets through (Q34). */
+export const SET_ANCHOR_BONUS = 1.3
 /** A defender who moved at least this far this STEP counts as fully "on the
  *  move" (no anchor bonus); below it, the bonus ramps in toward SET_ANCHOR_BONUS.
  *  Tuned to one jog step, so a planted (held) defender anchors and a closing one
@@ -283,9 +286,9 @@ export const OPEN_DISTANCE = 14
  *  WIDE-OPEN look lands near real rates (~72% layup, ~50% mid 2, ~40% three) and
  *  a contested one falls off hard — see shotMakeChance. */
 export const SHOT_BASE = {
-  layup: 0.52,
+  layup: 0.48,
   two: 0.28,
-  three: 0.22,
+  three: 0.25,
 } as const
 
 /** How much a fully-open look adds vs a tightly-covered one. */

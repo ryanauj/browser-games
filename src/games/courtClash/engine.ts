@@ -695,7 +695,7 @@ export function shotMakeChance(players: Player[], shooter: Player): number {
     base +
     OPENNESS_SHOT_WEIGHT * (open - 0.4) +
     statN(skill) * SHOT_STAT_WEIGHT -
-    rangePenalty(shooter.pos) * 0.45 -
+    rangePenalty(shooter.pos) * 0.28 -
     (isGassed(shooter) ? 0.08 : 0) +
     (shooter.primed > 0 ? DRIVE_FINISH_BONUS : 0) // downhill off a drive
   return clampP(p)
