@@ -7,6 +7,8 @@ import {
   CUTOFF_LEAD,
   CUTOFF_RIM_DOT,
   CUTOFF_SPRINT_MIN,
+  GAMBLE_RANGE,
+  GAMBLE_THREAT_RIM,
   HELP_PAINT_RADIUS,
   MAX_SHOT_RANGE,
   OPENNESS_SHOT_WEIGHT,
@@ -551,6 +553,33 @@ function planDefense(state: GameState, side: Side): AiPlan {
         const spot = clampToCourt(stepToward(handler.pos, BASKET, CUTOFF_LEAD))
         orders[primaryIdx] = { playerId: ai[primaryIdx].id, order: { kind: 'help', to: spot, mode: 'sprint' } }
       }
+    }
+
+    // GAMBLE FOR THE STRIP (Q20). The handler's handle is LOOSE this step — he just
+    // bulled through a body and exposed the ball (`handler.bull`, REVEALED last-step
+    // state set by the collision path, never a hidden order, so Q16-legal). The
+    // nearest defender on him lunges for the strip. This is a real risk/reward, not
+    // a free button: the engine prices the steal high vs a loose handle
+    // (GAMBLE_STEAL_LOOSE_BONUS) but a MISS leaves the gambler beaten — he
+    // over-commits past the ball and is STUCK recovering, surrendering the on-ball
+    // man entirely. That miss cost is brutal when you still had the drive contained,
+    // so a smart defender only reaches when he has NOTHING TO LOSE: the loose-handle
+    // handler has already bulled into a near-certain finish (inside GAMBLE_THREAT_RIM
+    // of the rim). Then a miss costs ~nothing (he scores anyway) while a strip denies
+    // the bucket and flips possession — an EV-positive gamble, not a coin-flip bail.
+    // Overrides the cutoff: stripping the exposed ball beats walling it.
+    if (handler.bull > 0 && distToRim(handler.pos) < GAMBLE_THREAT_RIM) {
+      let gIdx = -1
+      let gd = GAMBLE_RANGE
+      for (let i = 0; i < ai.length; i++) {
+        if (ai[i].stuck > 0) continue // already hung up — can't lunge
+        const d = dist(ai[i].pos, handler.pos)
+        if (d < gd) {
+          gd = d
+          gIdx = i
+        }
+      }
+      if (gIdx >= 0) orders[gIdx] = { playerId: ai[gIdx].id, order: { kind: 'steal', markId: handler.id } }
     }
   }
   return { orders }

@@ -350,6 +350,17 @@ export const GAMBLE_MISS_LUNGE = 4
 /** …and is slowed (STUCK) this many steps recovering — handing the offense a real
  *  step of separation for the failed reach-in. */
 export const GAMBLE_MISS_STUCK = 3
+/** Pre-movement range (floor units) within which a defender will issue the gamble
+ *  on a loose handle. A touch beyond the engine's post-movement gamble reach (≤8)
+ *  so a defender who closes a step this beat still arrives in strip range; kept
+ *  tight so only a defender already on the ball lunges (the loose handle is a
+ *  one-step window, not a standing reach-in). */
+export const GAMBLE_RANGE = 10
+/** A loose-handle handler is only worth gambling on once he's bulled this close to
+ *  the rim — a near-certain finish where a missed reach-in costs ~nothing (he was
+ *  scoring anyway) but a strip denies the bucket. Farther out, a contained drive is
+ *  worth more kept in front than coin-flipped away, so the defender holds. */
+export const GAMBLE_THREAT_RIM = RIM_RADIUS + 8
 
 /** Offensive rebound chance on a miss (defense rebounds otherwise). */
 export const OREB_BASE = 0.26
