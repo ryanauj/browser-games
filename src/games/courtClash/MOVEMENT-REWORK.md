@@ -852,6 +852,52 @@ basketball. Balance stays advisory (Q27); determinism is the only hard gate
   telegraphed cutoff / gamble is a real mind-game, not a free exploit; the CPU
   rollout is a worst-case adversary for any committed defense.
 
+## Session 5c — steal regression + shot-mix recovery + honest defense baseline
+
+5b shipped the committed cutoff (Q9) + gamble-steals GREEN but introduced a
+steal-spam regression (16.8/game, ~2× realistic) that churned possessions to ~40
+and cratered efficiency to 0.6 pts/poss, dragged the shot mix rim-ward (5a 67/4/30
+→ 74/4/22), and the defense-matters metric was still measuring the wrong thing.
+Three fixes; balance advisory (Q27), determinism the only hard gate.
+
+### Q40 — The 5b steal spike AND the mix regression share two causes (the cutoff + the gamble), and both come from VACATING containment
+**[FOUND: tame the gamble + reserve the cutoff for true breakaways — don't touch
+the strip rate or the offense.]**
+- **Diagnosis.** A self-play steal breakdown showed the 16.8/game was the
+  loose-handle **gamble (~7)** + a **drive-strip (~9.6)**; lane picks were noise
+  (~0.2). Critically, 5b changed **no scoring constant and nothing in
+  planOffense** — the offense is byte-identical to 5a. So the *entire* mix
+  regression is the offense's Q25 rollout **reacting to the new defense**: both
+  5b reads pull the on-ball man OFF the ball (the gamble lunges; the cutoff
+  sprints to a rim plant), and once a defender vacates, the rollout reads the open
+  lane and attacks the rim — fewer kick-outs, fewer threes, and (bulling the lone
+  planted body) *more* drive-strips. The strip risk of a **trailing** man is what
+  made 5a's rollout kick out for threes; 5b's reads removed the trailer.
+- **A wrong turn, recorded.** The first cut tried to cut steals at the *strip*
+  (drop its clampP floor, tighten its radius, lower STRIP_BASE). It hit ~9 steals
+  but made drives nearly risk-free → the rollout exploited the rim even harder
+  (mix to 83/2/15). Lesson: **steal-risk and the three-rate are the same dial**
+  in this rollout model — you cannot cut steals by making drives safe without
+  losing the threes. Reverted entirely; the strip model is left at 5a values.
+- **The fix that works (Fix 1 + Fix 2), both in constants — reducer untouched:**
+  - **Gamble (Fix 1):** `GAMBLE_STEAL_BASE` 0.18→0.10, `GAMBLE_STEAL_LOOSE_BONUS`
+    0.24→0.16, `GAMBLE_THREAT_RIM` RIM+8→**RIM−4** (basket-only). The threat gate
+    is a *cliff*: at RIM−3 self-play steals jump to ~15 (the gamble fires all the
+    way up a contained drive, churning possessions); RIM−4 sits on a stable ~7
+    plateau where it stays a real read on a true at-the-rim loose handle.
+  - **Cutoff (Fix 2):** `CUTOFF_SPRINT_MIN` 6→**13**. At 6 the cutoff fired on
+    *every* drive (a building drive clears 6 in a step), so the on-ball man
+    abandoned the trail every possession — exactly the containment leak above.
+    13 is just under sprint-top (jog×1.7 ≈ 8.5–13.6), so the cutoff fires only on
+    a genuine breakaway you can't trail (its Q9 intent), and the disciplined
+    trailing man is restored the rest of the time.
+- **Result (self-play, 60 games):** steals **16.8 → 7.0** (drive-strip 6.7,
+  gamble 0.3, lane 0.0); shot mix **74/4/22 → 63/7/30** (≈ 5a or better);
+  3P% 25, FG 52; pace **734 → 1059 steps/game**, **29.9 poss**, **0.6 → 0.9
+  pts/poss**. Determinism GREEN across 10 seeds. The remaining gap to the ~40-55%
+  rim ideal is the same structural one 5a/5b flagged (in defense-less self-play
+  the rim is genuinely uncontested — a help-rotation/rim-wall job, deferred).
+
 ## Variation ideas to try later (compare/combine)
 
 - Accel ramp (Q4) **+** engine-internal chaining (Q3 alt) as a low-risk first
