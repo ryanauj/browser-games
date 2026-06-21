@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { BASKET, LEAD_CATCH_RADIUS, PASS_LANE_RADIUS, WIN_TARGET, riskOf, type Risk } from './constants'
+import { BASKET, LEAD_CATCH_RADIUS, PASS_LANE_RADIUS, SPRINT_FLOOR, WIN_TARGET, riskOf, type Risk } from './constants'
 import { passStealChance, shotMakeChance } from './engine'
 import { dist, distToSegment, leadCatch, nearestOpponent, reachOf, stepToward } from './geometry'
 import { useCourtClash } from './useCourtClash'
@@ -345,6 +345,11 @@ export default function CourtClash() {
     }
     const spot = reachClamp(id, at)
     const burstSpot = reachClamp(id, at, true) // drives/cuts reach the outer ring
+    // Sprint is always on the table next to Move — except when the player is so
+    // gassed the engine would collapse the burst to a jog anyway (below the
+    // sprint floor). Otherwise the speed choice silently disappears on some drop
+    // targets, which reads as a bug.
+    const canSprint = p.stamina >= SPRINT_FLOOR
     const target = byId(targetId)
     const onTeammate = !!target && target.side === YOU && target.id !== id
     const onEnemy = !!target && target.side !== YOU
@@ -369,7 +374,7 @@ export default function CourtClash() {
         // rim, you can lead them with the pass instead (only when it's a catch —
         // no risky throws cluttering the shoot menu).
         items.push(shootItem(id))
-        items.push(mk('Sprint', '⚡', { kind: 'drive', to: reachClamp(id, BASKET, true) }))
+        if (canSprint) items.push(mk('Sprint', '⚡', { kind: 'drive', to: reachClamp(id, BASKET, true) }))
         if (lead?.catchable) {
           items.push(mk('Lead pass', '🎯', { kind: 'pass', toId: lead.mover.id, lead: at }))
           note = '🎯 Lead pass — drops it ahead of a cutter to catch in stride.'
@@ -380,20 +385,23 @@ export default function CourtClash() {
           // If that teammate is within reach, you might mean to relocate, not pass.
           if (withinReach(id, target.pos)) {
             items.push(mk('Move', '👟', { kind: 'move', to: reachClamp(id, target.pos), mode: 'jog' }))
+            if (canSprint) items.push(mk('Sprint', '⚡', { kind: 'drive', to: reachClamp(id, target.pos, true) }))
           }
         } else {
           // Drop onto a teammate to set a pick FOR them (screen their defender).
           items.push(mk('Screen', '🧱', screenFor(target.id)))
           items.push(mk('Move', '👟', { kind: 'move', to: reachClamp(id, target.pos), mode: 'jog' }))
+          if (canSprint) items.push(mk('Sprint', '⚡', { kind: 'cut', to: reachClamp(id, target.pos, true) }))
         }
       } else if (onEnemy && target) {
         if (isHandler) {
-          items.push(mk('Sprint', '⚡', { kind: 'drive', to: reachClamp(id, target.pos, true) }))
+          if (canSprint) items.push(mk('Sprint', '⚡', { kind: 'drive', to: reachClamp(id, target.pos, true) }))
           items.push(mk('Move', '👟', { kind: 'move', to: spot, mode: 'jog' }))
         } else {
           // Drop onto a defender to screen that man (track them, not the floor).
           items.push(mk('Screen', '🧱', { kind: 'screen', to: { ...target.pos }, markId: target.id }))
           items.push(mk('Move', '👟', { kind: 'move', to: spot, mode: 'jog' }))
+          if (canSprint) items.push(mk('Sprint', '⚡', { kind: 'cut', to: burstSpot }))
         }
       } else if (isHandler) {
         // Aiming at open floor: lead a teammate breaking toward here with a pass
@@ -409,12 +417,12 @@ export default function CourtClash() {
             note = '🎲 Risky pass — no teammate can reach this spot; likely a turnover.'
           }
         }
-        items.push(mk('Sprint', '⚡', { kind: 'drive', to: burstSpot }))
+        if (canSprint) items.push(mk('Sprint', '⚡', { kind: 'drive', to: burstSpot }))
         items.push(mk('Move', '👟', { kind: 'move', to: spot, mode: 'jog' }))
       } else {
         items.push(mk('Move', '👟', { kind: 'move', to: spot, mode: 'jog' }))
         items.push(mk('Screen', '🧱', { kind: 'screen', to: spot }))
-        items.push(mk('Sprint', '⚡', { kind: 'cut', to: burstSpot }))
+        if (canSprint) items.push(mk('Sprint', '⚡', { kind: 'cut', to: burstSpot }))
       }
     } else if (onEnemy && target) {
       items.push(mk('Guard', '🛡️', { kind: 'guard', markId: target.id }))
@@ -422,7 +430,7 @@ export default function CourtClash() {
       items.push(mk('Steal', '🖐️', { kind: 'steal', markId: target.id }))
     } else {
       items.push(mk('Move', '👟', { kind: 'help', to: spot }))
-      items.push(mk('Sprint', '⚡', { kind: 'help', to: spot, mode: 'sprint' }))
+      if (canSprint) items.push(mk('Sprint', '⚡', { kind: 'help', to: spot, mode: 'sprint' }))
     }
 
     if (items.length === 0) {
