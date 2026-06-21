@@ -89,11 +89,25 @@ function playGame(seed: number, playerPolicy: 'ai' | 'idle' = 'ai') {
   // normalized per-possession (raw point totals are skewed by possession count,
   // e.g. an idle side cycles the ball back fast and inflates the opponent's tally).
   const offPoss: Record<Side, Set<number>> = { player: new Set(), ai: new Set() }
+  // Points the AI scored on each of its OWN offensive possessions, IN ORDER. The
+  // defense-matters metric reads the first N of these so the guard/idle compare is
+  // over equal possession samples (an idle game runs far longer — player scores 0
+  // — and would otherwise pile up garbage-time trips that swamp the average).
+  const aiPossPts: number[] = []
+  let lastAiPoss = -1
+  let prevAiScore = s.score.ai
   let steps = 0
   while (s.phase === 'play' && steps < STEP_CAP) {
     const offense = s.offense
     offPoss[offense].add(s.possession)
+    if (offense === 'ai' && s.possession !== lastAiPoss) {
+      aiPossPts.push(0) // a new AI offensive trip starts
+      lastAiPoss = s.possession
+    }
     s = selfPlayStep(s, playerPolicy)
+    const dAi = s.score.ai - prevAiScore // points the step just produced (offense scored)
+    if (dAi > 0 && offense === 'ai' && aiPossPts.length) aiPossPts[aiPossPts.length - 1] += dAi
+    prevAiScore = s.score.ai
     note(by[offense], s) // attribute this step's events to whoever had the ball
     steps++
   }
@@ -105,6 +119,7 @@ function playGame(seed: number, playerPolicy: 'ai' | 'idle' = 'ai') {
     score: s.score,
     possessions: s.possession,
     offPoss: { player: offPoss.player.size, ai: offPoss.ai.size },
+    aiPossPts,
     minSta,
     avgSta,
     over: s.phase === 'gameover',
@@ -155,36 +170,53 @@ function main() {
   console.log(`  stamina at game end:  avg ${f1(avgStaTot / GAMES)}  min ${f1(minStaTot / GAMES)}`)
 
   // --- Does player defense change AI scoring? guarding (CPU) vs idle, same seeds ---
-  let aiVsGuard = 0
-  let aiVsIdle = 0
+  //
+  // The honest comparison is pts/possession over EQUAL possession samples. A naive
+  // "total AI pts / total AI poss" is doubly confounded: (a) an idle game never
+  // ends (the player scores 0), so it runs to STEP_CAP and the AI piles up ~5×
+  // the possessions of a guarded game that reaches 15 and stops; (b) those extra
+  // trips are garbage-time, dragging the idle average down. So for each seed we
+  // take the FIRST N AI offensive possessions of BOTH runs, where N = the shorter
+  // run's AI-possession count — same sample size, no blowup, no garbage tail.
+  let guardPts = 0
+  let guardPossN = 0
+  let idlePts = 0
+  let idlePossN = 0
   let guardShots = 0
   let guardMakes = 0
   let idleShots = 0
   let idleMakes = 0
-  let guardPoss = 0
-  let idlePoss = 0
+  let guardTotPoss = 0
+  let idleTotPoss = 0
   for (let i = 0; i < GAMES; i++) {
     const guard = playGame(7000 + i, 'ai')
     const idle = playGame(7000 + i, 'idle')
-    aiVsGuard += guard.score.ai
-    aiVsIdle += idle.score.ai
+    const n = Math.min(guard.aiPossPts.length, idle.aiPossPts.length)
+    for (let k = 0; k < n; k++) {
+      guardPts += guard.aiPossPts[k]
+      idlePts += idle.aiPossPts[k]
+    }
+    guardPossN += n
+    idlePossN += n
     guardShots += guard.by.ai.shots
     guardMakes += guard.by.ai.makes
     idleShots += idle.by.ai.shots
     idleMakes += idle.by.ai.makes
-    guardPoss += guard.offPoss.ai
-    idlePoss += idle.offPoss.ai
+    guardTotPoss += guard.offPoss.ai
+    idleTotPoss += idle.offPoss.ai
   }
-  // Per-possession is the honest measure: total AI pts is inflated when the player
-  // idles (the AI simply gets far more possessions), so normalize by AI's own
-  // offensive trips. The point-total line stays for reference.
-  const guardPP = aiVsGuard / Math.max(1, guardPoss)
-  const idlePP = aiVsIdle / Math.max(1, idlePoss)
-  console.log(`\n=== Does player defense matter? (AI offense, same ${GAMES} seeds) ===`)
-  console.log(`  player GUARDS:  AI pts=${aiVsGuard} over ${guardPoss} poss → ${f1(guardPP)} pts/poss  (FG% ${pct(guardMakes, guardShots)})`)
-  console.log(`  player IDLE:    AI pts=${aiVsIdle} over ${idlePoss} poss → ${f1(idlePP)} pts/poss  (FG% ${pct(idleMakes, idleShots)})`)
-  console.log(`  => defense effect: ${f1(((idlePP - guardPP) / Math.max(0.001, idlePP)) * 100)}% fewer AI pts/possession when guarding`)
-  console.log(`     (raw point-total delta: ${f1(((aiVsIdle - aiVsGuard) / Math.max(1, aiVsIdle)) * 100)}% — inflated by possession count)`)
+  const guardPP = guardPts / Math.max(1, guardPossN)
+  const idlePP = idlePts / Math.max(1, idlePossN)
+  // Effect = signed pts/poss swing from guarding, as a fraction of the larger of
+  // the two rates — bounded to [-100%, +100%] so it can never print a nonsense
+  // −625%. Positive = guarding RAISES AI scoring (the surprising case); negative
+  // = guarding suppresses it (defense working as you'd expect).
+  const effect = ((guardPP - idlePP) / Math.max(0.001, guardPP, idlePP)) * 100
+  console.log(`\n=== Does player defense matter? (AI offense, same ${GAMES} seeds, first-N equal poss) ===`)
+  console.log(`  player GUARDS:  ${f1(guardPP)} pts/poss over ${guardPossN} sampled poss  (FG% ${pct(guardMakes, guardShots)})`)
+  console.log(`  player IDLE:    ${f1(idlePP)} pts/poss over ${idlePossN} sampled poss  (FG% ${pct(idleMakes, idleShots)})`)
+  console.log(`  => defense effect: ${f1(effect)}%  (${effect >= 0 ? 'guarding RAISES AI pts/poss — defense NOT suppressing' : 'guarding lowers AI pts/poss — defense working'})`)
+  console.log(`     (possession blowup, for reference: AI got ${f1(idleTotPoss / GAMES)} poss/game idle vs ${f1(guardTotPoss / GAMES)} guarded)`)
 }
 
 main()
