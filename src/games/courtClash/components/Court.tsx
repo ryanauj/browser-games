@@ -58,8 +58,11 @@ export interface CourtProps {
   /** A shot in its windup (Q17/Q33) — the shooter is rooted and gathering while
    *  the defense can still close. null = no shot gathering. */
   gather: ShotGather | null
-  /** Open radial menu (drop point + contextual actions), if any. */
-  radial: { at: Vec; items: RadialItem[] } | null
+  /** Open radial menu (drop point + contextual actions), if any. `note` is an
+   *  optional one-line caption explaining the offered actions (e.g. lead pass). */
+  radial: { at: Vec; items: RadialItem[]; note?: string } | null
+  /** Pulse YOUR ball handler to answer "who has the ball" during onboarding. */
+  handlerCue?: boolean
   onPlayerTap: (id: string) => void
   onCourtTap: (pt: Vec) => void
   /** A drag finished on `at`; `targetId` is the player dropped onto, if any. */
@@ -89,6 +92,7 @@ export function Court(props: CourtProps) {
     ball,
     gather,
     radial,
+    handlerCue,
     onPlayerTap,
     onCourtTap,
     onDragRelease,
@@ -508,7 +512,17 @@ export function Court(props: CourtProps) {
                 style={{ width: `${p.stamina}%` }}
               />
             </span>
-            {hasBall && !ballFlight && <span className="cc-player__dot" aria-hidden />}
+            {hasBall && !ballFlight && (
+          <span
+            className={`cc-player__dot${isYours ? ' cc-player__dot--mine' : ''}${
+              hasBall && isYours && handlerCue ? ' cc-player__dot--cue' : ''
+            }`}
+            title="Has the ball"
+            aria-hidden
+          >
+            🏀
+          </span>
+        )}
             {screenOrder && (
               <span className="cc-player__screen" title={planted ? 'Screen set' : 'Setting screen'} aria-hidden>
                 🧱
@@ -533,10 +547,26 @@ export function Court(props: CourtProps) {
         )
       })}
 
+      {/* Live closeout cue (Q17) — the shooter's gather is observable motion, so
+          surface it as legible UI (not just the aria-hidden 🎯 badge): the defense
+          reads "close out!" and the offense "hold steady" during the 2–3 step
+          window. Own-orders-only telegraph is preserved — this mirrors the visible
+          windup ring, not a hidden order. */}
+      {gatherShooter && (
+        <div
+          className={`cc-closeout cc-closeout--${gatherShooter.side === yourSide ? 'mine' : 'theirs'}`}
+          style={{ left: pct(gatherShooter.pos.x, COURT_W), top: pct(gatherShooter.pos.y, COURT_H) }}
+          role="status"
+        >
+          {gatherShooter.side === yourSide ? '🎯 Gathering — hold' : '🎯 Close out!'}
+        </div>
+      )}
+
       {flash && <div className={`cc-flash cc-flash--${flash.tone}`}>{flash.text}</div>}
 
       {radial && (
         <div className="cc-radial-backdrop" onPointerDown={() => onRadialCancel()}>
+          {radial.note && <div className="cc-radial-note">{radial.note}</div>}
           <div className="cc-radial" style={radialAnchor(radial.at)}>
             {radial.items.map((it, i) => {
               // Item 0 sits at the drop point; the rest fan out in an upward arc.
