@@ -338,11 +338,14 @@ export const STRIP_STAT_WEIGHT = 0.24
 /** Steal-gamble order (Q20): a defender lunges for the strip. Base reward + a big
  *  bonus vs a LOOSE handle (a handler whose ball is exposed from bulling a body,
  *  `Player.bull`), composed with the collision output rather than re-derived. */
-export const GAMBLE_STEAL_BASE = 0.18
+export const GAMBLE_STEAL_BASE = 0.1 // 5c (Fix 1): 0.18 → 0.10, see GAMBLE_STEAL_LOOSE_BONUS
 export const GAMBLE_STEAL_STAT_WEIGHT = 0.3
 /** Added to the gamble vs a loose/bulled handle — the strip is far likelier when
- *  the ball is already exposed. */
-export const GAMBLE_STEAL_LOOSE_BONUS = 0.24
+ *  the ball is already exposed. 5c (Fix 1): trimmed 0.24 → 0.16 — against the
+ *  rollout offense the loose-handle gamble was the single biggest steal source
+ *  (~7/game of the 16.8 spike); a missed reach-in is meant to be a real risk, not
+ *  the dominant way the ball changes hands. */
+export const GAMBLE_STEAL_LOOSE_BONUS = 0.16
 /** Cost of a MISSED gamble (Q20): the defender lunged and got beaten. He
  *  over-commits this many floor units toward where the ball was (out of the play)…
  */
@@ -359,8 +362,16 @@ export const GAMBLE_RANGE = 10
 /** A loose-handle handler is only worth gambling on once he's bulled this close to
  *  the rim — a near-certain finish where a missed reach-in costs ~nothing (he was
  *  scoring anyway) but a strip denies the bucket. Farther out, a contained drive is
- *  worth more kept in front than coin-flipped away, so the defender holds. */
-export const GAMBLE_THREAT_RIM = RIM_RADIUS + 8
+ *  worth more kept in front than coin-flipped away, so the defender holds. 5c
+ *  (Fix 1): tightened RIM_RADIUS+8 → RIM_RADIUS−4 (≈10 units, essentially at the
+ *  basket). Against the rollout offense the wider band fired the gamble on
+ *  essentially every bulled drive — it not only spiked steals but, by pulling the
+ *  on-ball man into a lunge, vacated containment and dragged the shot mix to the
+ *  rim. The gate is a cliff: at RIM−3 self-play steals jump to ~15 (the gamble
+ *  fires all the way up a contained drive); RIM−4 sits on the stable plateau
+ *  (~7 steals) where it stays a real read on a true loose handle at the basket
+ *  without churning possessions. */
+export const GAMBLE_THREAT_RIM = RIM_RADIUS - 4
 
 /** Offensive rebound chance on a miss (defense rebounds otherwise). */
 export const OREB_BASE = 0.26
