@@ -311,11 +311,16 @@ export const OPEN_DISTANCE = 14
 
 /** Shot make: base rates by shot type, before openness/stat/contest. Tuned so a
  *  WIDE-OPEN look lands near real rates (~72% layup, ~50% mid 2, ~40% three) and
- *  a contested one falls off hard — see shotMakeChance. */
+ *  a contested one falls off hard — see shotMakeChance. 5d (Fix 3): three 0.25 →
+ *  0.28 to buffer realized 3P% against the gather-closeout (a jogging defender
+ *  closes out during the 2-step gather, taxing release openness), lifting in-game
+ *  3P% from ~25% to a realistic ~34%. The breakaway gate (ai.planOffense) keeps the
+ *  open-floor offense finishing at the rim, so this buff lifts the made-rate without
+ *  re-tilting open-floor shot selection back to threes. */
 export const SHOT_BASE = {
   layup: 0.48,
   two: 0.28,
-  three: 0.25,
+  three: 0.28,
 } as const
 
 /** How much a fully-open look adds vs a tightly-covered one. */
