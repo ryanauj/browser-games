@@ -334,9 +334,9 @@ export default function CourtClash() {
   }
 
   // Drag-release opens a radial of the actions that fit the drop target: drop
-  // onto a player for pass/screen/guard/etc., or on a spot for move/screen/cut.
-  // One sensible action (Move/Drive/Help) is the primary; a lone action just
-  // fires (drag-to-teammate passes instantly, drag-to-floor on defense helps).
+  // onto a player for pass/screen/guard/etc., or on a spot for move/screen/sprint.
+  // One sensible action (Move/Sprint) is the primary; a lone action just
+  // fires (drag-to-teammate passes instantly, drag-to-floor on defense moves).
   const onDragRelease = (id: string, at: Vec, targetId: string | null) => {
     const p = byId(id)
     if (!p || p.side !== YOU) {
@@ -369,7 +369,7 @@ export default function CourtClash() {
         // rim, you can lead them with the pass instead (only when it's a catch —
         // no risky throws cluttering the shoot menu).
         items.push(shootItem(id))
-        items.push(mk('Drive', '⚡', { kind: 'drive', to: reachClamp(id, BASKET, true) }))
+        items.push(mk('Sprint', '⚡', { kind: 'drive', to: reachClamp(id, BASKET, true) }))
         if (lead?.catchable) {
           items.push(mk('Lead pass', '🎯', { kind: 'pass', toId: lead.mover.id, lead: at }))
           note = '🎯 Lead pass — drops it ahead of a cutter to catch in stride.'
@@ -388,7 +388,7 @@ export default function CourtClash() {
         }
       } else if (onEnemy && target) {
         if (isHandler) {
-          items.push(mk('Drive', '⚡', { kind: 'drive', to: reachClamp(id, target.pos, true) }))
+          items.push(mk('Sprint', '⚡', { kind: 'drive', to: reachClamp(id, target.pos, true) }))
           items.push(mk('Move', '👟', { kind: 'move', to: spot, mode: 'jog' }))
         } else {
           // Drop onto a defender to screen that man (track them, not the floor).
@@ -409,19 +409,20 @@ export default function CourtClash() {
             note = '🎲 Risky pass — no teammate can reach this spot; likely a turnover.'
           }
         }
-        items.push(mk('Drive', '⚡', { kind: 'drive', to: burstSpot }))
+        items.push(mk('Sprint', '⚡', { kind: 'drive', to: burstSpot }))
         items.push(mk('Move', '👟', { kind: 'move', to: spot, mode: 'jog' }))
       } else {
         items.push(mk('Move', '👟', { kind: 'move', to: spot, mode: 'jog' }))
         items.push(mk('Screen', '🧱', { kind: 'screen', to: spot }))
-        items.push(mk('Cut', '✂️', { kind: 'cut', to: burstSpot }))
+        items.push(mk('Sprint', '⚡', { kind: 'cut', to: burstSpot }))
       }
     } else if (onEnemy && target) {
       items.push(mk('Guard', '🛡️', { kind: 'guard', markId: target.id }))
       items.push(mk('Double', '👥', { kind: 'double', markId: target.id }))
       items.push(mk('Steal', '🖐️', { kind: 'steal', markId: target.id }))
     } else {
-      items.push(mk('Help', '🧭', { kind: 'help', to: spot }))
+      items.push(mk('Move', '👟', { kind: 'help', to: spot }))
+      items.push(mk('Sprint', '⚡', { kind: 'help', to: spot, mode: 'sprint' }))
     }
 
     if (items.length === 0) {
@@ -429,7 +430,7 @@ export default function CourtClash() {
       return
     }
     // Always surface the menu rather than auto-firing a lone action — so a drag
-    // always lets you choose (e.g. shoot vs. drive to the rim), never commits a
+    // always lets you choose (e.g. shoot vs. sprint to the rim), never commits a
     // shot behind your back.
     setRadial({ at, items, note })
   }
@@ -450,12 +451,12 @@ export default function CourtClash() {
           label: 'Pass →',
           run: () => setPending({ playerId: id, need: 'teammate', make: (t) => ({ kind: 'pass', toId: t }), hint: 'Pick a teammate to pass to.', risk: 'pass' }),
         })
-        list.push({ label: 'Drive', sub: 'sprint · fast, committed', mode: 'sprint', run: () => issue(id, { kind: 'drive', to: reachClamp(id, BASKET, true) }) })
+        list.push({ label: 'Sprint', sub: 'fast, committed', mode: 'sprint', run: () => issue(id, { kind: 'drive', to: reachClamp(id, BASKET, true) }) })
       } else {
-        list.push({ label: 'Cut', sub: 'sprint · fast, committed', mode: 'sprint', run: () => issue(id, { kind: 'cut', to: reachClamp(id, BASKET, true) }) })
+        list.push({ label: 'Sprint', sub: 'fast, committed', mode: 'sprint', run: () => issue(id, { kind: 'cut', to: reachClamp(id, BASKET, true) }) })
         list.push({
           label: 'Move →',
-          sub: 'jog · slow, nimble',
+          sub: 'slow, nimble',
           mode: 'jog',
           run: () => setPending({ playerId: id, need: 'point', make: (pt) => ({ kind: 'move', to: pt, mode: 'jog' }), hint: 'Tap a spot within reach.', clampReach: true }),
         })
@@ -481,8 +482,16 @@ export default function CourtClash() {
         list.push({ label: 'Steal', run: () => issue(id, { kind: 'steal', markId: state.ballHandlerId! }) })
       }
       list.push({
-        label: 'Help →',
+        label: 'Move →',
+        sub: 'slow, nimble',
+        mode: 'jog',
         run: () => setPending({ playerId: id, need: 'point', make: (pt) => ({ kind: 'help', to: pt }), hint: 'Tap a spot within reach.', clampReach: true }),
+      })
+      list.push({
+        label: 'Sprint →',
+        sub: 'fast, committed cutoff',
+        mode: 'sprint',
+        run: () => setPending({ playerId: id, need: 'point', make: (pt) => ({ kind: 'help', to: pt, mode: 'sprint' }), hint: 'Tap a spot to sprint and cut off.', clampReach: true }),
       })
     }
     return list
