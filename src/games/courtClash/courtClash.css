@@ -1007,6 +1007,14 @@
     place-items: center;
   }
 }
+/* Yield the bottom-right thumb arc to the radial menu: a player dragged near the
+   anchor opens the radial there (backdrop z-index 8), and the FAB (z-index 15)
+   would otherwise float over its bottom-right option and block the confirm tap.
+   Hide the FAB while a radial is open — the bottom-bar Next-Step button remains.
+   Placed after the media query so it wins over the `display: grid` above. */
+.cc__fab--hidden {
+  display: none;
+}
 
 /* Attribute panel (tap a player) --------------------------------------- */
 .cc-attrs {

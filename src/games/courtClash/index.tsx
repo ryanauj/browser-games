@@ -616,7 +616,7 @@ export default function CourtClash() {
       {state.phase === 'play' && (
         <button
           type="button"
-          className="cc__fab"
+          className={`cc__fab${radial ? ' cc__fab--hidden' : ''}`}
           onClick={handleNextStep}
           disabled={stepDisabled}
           aria-label="Next step"
