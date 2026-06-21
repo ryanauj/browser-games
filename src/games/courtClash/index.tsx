@@ -14,10 +14,13 @@ import './courtClash.css'
 
 const HELP_SEEN_KEY = 'courtclash-help-seen'
 const COACHED_KEY = 'courtclash-coached'
-/** First-run, learn-by-doing nudges — advance as the player actually acts. */
+/** First-run, learn-by-doing nudges — advance as the player actually acts. The
+ *  first beat points at the ball handler (the glowing 🏀 token) so a newcomer
+ *  knows who to act on; only tapping THAT player advances, so a stray tap on an
+ *  off-ball teammate doesn't burn the intro. */
 const COACH_STEPS = [
-  '👋 Tap one of your players (blue) to give an order — or drag them onto a teammate or an open spot.',
-  '👍 Set orders for any of your five, then press ▶ Next Step to advance one step. Orders stick until you change them.',
+  '👋 You\'re on offense. The glowing 🏀 token is your ball handler — tap them (or drag) to give the first order.',
+  '👍 Set orders for any of your five (they stick until you change them), then press ▶ Next Step to advance one step.',
 ]
 const YOU: Side = 'player'
 /** Floor-unit radius for treating overlapping sprites as a tappable stack. */
@@ -124,7 +127,7 @@ export default function CourtClash() {
 
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [pending, setPending] = useState<Pending>(null)
-  const [radial, setRadial] = useState<{ at: Vec; items: RadialItem[] } | null>(null)
+  const [radial, setRadial] = useState<{ at: Vec; items: RadialItem[]; note?: string } | null>(null)
   const [flash, setFlash] = useState<{ text: string; tone: Risk | 'neutral' } | null>(null)
 
   const [debugOpen, setDebugOpen] = useState(false)
@@ -153,10 +156,12 @@ export default function CourtClash() {
     setRadial(null)
   }, [state.possession, state.step, state.phase])
 
-  // First-run coach: advance from "tap a player" once they've selected one.
+  // First-run coach: advance from "find the ball handler" once they've actually
+  // selected the handler the beat points at — a stray tap on an off-ball teammate
+  // (or empty floor) leaves the intro up rather than burning it.
   useEffect(() => {
-    if (coachStep === 0 && selectedId) setCoachStep(1)
-  }, [coachStep, selectedId])
+    if (coachStep === 0 && selectedId && selectedId === state.ballHandlerId) setCoachStep(1)
+  }, [coachStep, selectedId, state.ballHandlerId])
 
   // Surface the latest beat event as a brief flash.
   useEffect(() => {
@@ -338,6 +343,9 @@ export default function CourtClash() {
       run: () => issue(id, order),
     })
     const items: RadialItem[] = []
+    // A one-line caption explaining the offered actions in-context (e.g. the
+    // difference between a lead pass and a risky pass), shown under the menu.
+    let note: string | undefined
 
     if (onOffense) {
       const isHandler = id === state.ballHandlerId
@@ -351,7 +359,10 @@ export default function CourtClash() {
         // no risky throws cluttering the shoot menu).
         items.push(shootItem(id))
         items.push(mk('Drive', '⚡', { kind: 'drive', to: reachClamp(id, BASKET, true) }))
-        if (lead?.catchable) items.push(mk('Lead pass', '🎯', { kind: 'pass', toId: lead.mover.id, lead: at }))
+        if (lead?.catchable) {
+          items.push(mk('Lead pass', '🎯', { kind: 'pass', toId: lead.mover.id, lead: at }))
+          note = '🎯 Lead pass — drops it ahead of a cutter to catch in stride.'
+        }
       } else if (onTeammate && target) {
         if (isHandler) {
           items.push(mk('Pass', '🤝', { kind: 'pass', toId: target.id }))
@@ -379,11 +390,13 @@ export default function CourtClash() {
         // throw if it sails past everyone (a likely turnover). Either way the
         // handler's own drive/move stay on the menu.
         if (lead) {
-          items.push(
-            lead.catchable
-              ? mk('Lead pass', '🎯', { kind: 'pass', toId: lead.mover.id, lead: at })
-              : mk('Risky pass', '🎲', { kind: 'pass', toId: lead.mover.id, lead: at }),
-          )
+          if (lead.catchable) {
+            items.push(mk('Lead pass', '🎯', { kind: 'pass', toId: lead.mover.id, lead: at }))
+            note = '🎯 Lead pass — drops it ahead of a cutter to catch in stride.'
+          } else {
+            items.push(mk('Risky pass', '🎲', { kind: 'pass', toId: lead.mover.id, lead: at }))
+            note = '🎲 Risky pass — no teammate can reach this spot; likely a turnover.'
+          }
         }
         items.push(mk('Drive', '⚡', { kind: 'drive', to: burstSpot }))
         items.push(mk('Move', '👟', { kind: 'move', to: spot, mode: 'jog' }))
@@ -407,7 +420,7 @@ export default function CourtClash() {
     // Always surface the menu rather than auto-firing a lone action — so a drag
     // always lets you choose (e.g. shoot vs. drive to the rim), never commits a
     // shot behind your back.
-    setRadial({ at, items })
+    setRadial({ at, items, note })
   }
 
   const onRadialCancel = () => setRadial(null)
@@ -416,7 +429,9 @@ export default function CourtClash() {
   const actions = useMemo(() => {
     if (!selected || selected.side !== YOU) return []
     const id = selected.id
-    const list: { label: string; run: () => void }[] = []
+    // `mode` tags movement actions slow-nimble (jog) vs fast-committed (sprint) so
+    // the central decision is legible on the buttons, not just buried in Help.
+    const list: { label: string; run: () => void; sub?: string; mode?: 'jog' | 'sprint' }[] = []
     if (onOffense) {
       if (id === state.ballHandlerId) {
         list.push({ label: '🏀 Shoot', run: () => game.callShot(id) })
@@ -424,11 +439,13 @@ export default function CourtClash() {
           label: 'Pass →',
           run: () => setPending({ playerId: id, need: 'teammate', make: (t) => ({ kind: 'pass', toId: t }), hint: 'Pick a teammate to pass to.', risk: 'pass' }),
         })
-        list.push({ label: 'Drive', run: () => issue(id, { kind: 'drive', to: reachClamp(id, BASKET, true) }) })
+        list.push({ label: 'Drive', sub: 'sprint · fast, committed', mode: 'sprint', run: () => issue(id, { kind: 'drive', to: reachClamp(id, BASKET, true) }) })
       } else {
-        list.push({ label: 'Cut', run: () => issue(id, { kind: 'cut', to: reachClamp(id, BASKET, true) }) })
+        list.push({ label: 'Cut', sub: 'sprint · fast, committed', mode: 'sprint', run: () => issue(id, { kind: 'cut', to: reachClamp(id, BASKET, true) }) })
         list.push({
           label: 'Move →',
+          sub: 'jog · slow, nimble',
+          mode: 'jog',
           run: () => setPending({ playerId: id, need: 'point', make: (pt) => ({ kind: 'move', to: pt, mode: 'jog' }), hint: 'Tap a spot within reach.', clampReach: true }),
         })
         list.push({
@@ -536,6 +553,7 @@ export default function CourtClash() {
         ball={state.ball}
         gather={state.gather}
         radial={radial}
+        handlerCue={onOffense && coachStep >= 0 && !selectedId}
         onPlayerTap={onPlayerTap}
         onCourtTap={onCourtTap}
         onDragRelease={onDragRelease}
@@ -552,8 +570,14 @@ export default function CourtClash() {
         ) : selected && selected.side === YOU ? (
           <div className="cc__actions">
             {actions.map((a) => (
-              <button key={a.label} type="button" className="cc-btn cc-btn--action" onClick={a.run}>
-                {a.label}
+              <button
+                key={a.label}
+                type="button"
+                className={`cc-btn cc-btn--action${a.mode ? ` cc-btn--${a.mode}` : ''}`}
+                onClick={a.run}
+              >
+                <span className="cc-action__label">{a.label}</span>
+                {a.sub && <span className="cc-action__sub">{a.sub}</span>}
               </button>
             ))}
           </div>
