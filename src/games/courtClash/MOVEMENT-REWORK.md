@@ -790,6 +790,68 @@ basketball. Balance stays advisory (Q27); determinism is the only hard gate
   finishes are uncontested, block ~0.09) but it's the honest valuation and will
   matter once 5b puts a body at the rim. Pure/deterministic (no RNG) — gate GREEN.
 
+### Q37 — Committed defensive cutoff (Q9), implementation finding
+**[BUILT in 5b. Key finding: the cutoff must PLANT, not chase.]**
+- The defensive half of the commit/react read-game (Q9) is now expressible: a
+  `help` order carries a `MoveMode`, and `moveModeOf` maps `help+sprint` to a
+  committed sprint that flows through the SAME two-phase machinery offense uses
+  (accel ramp, angle×speed bail). `planDefense` issues it for the on-ball man
+  when the handler is on a committed drive line — read off his REVEALED
+  `sprintSpeed`/`sprintDir` (Q16-legal; never his hidden this-step order).
+- **The geometry is load-bearing.** A naive cutoff that targets a spot a fixed
+  distance *ahead along the driver's heading* never works: that spot recedes
+  ~1 step/step with the driver, so the defender chases it forever, **never
+  plants**, never becomes a SET body, and just vacates his man — which the Q25
+  rollout offense punishes (defense-effect **+79%** in isolation, a pure leak).
+  Anchoring the plant point to a **goal-side chokepoint on the lane TO the rim**
+  (a fixed spot the driver is heading INTO) lets the defender beat him there,
+  stop, and anchor — and the bull contest favors the SET body. That alone drops
+  the isolated cutoff to **+21%** (≈ the tight-passive-man floor) and spikes
+  shot-clock TOs (stuffed drives). Lesson: a committed cutoff is only defense if
+  it ends in a *plant*.
+
+### Q38 — Gamble-steal read (Q20), EV against a rollout offense
+**[BUILT in 5b. Gated to "nothing to lose".]**
+- The AI now ISSUES the `steal` the engine already resolved: when the handler's
+  handle is loose (`bull > 0`, revealed), the nearest on-ball defender lunges.
+- **EV finding:** against the Q25 predictive-rollout offense a missed reach-in is
+  very expensive — the gambler is STUCK several steps, surrendering the on-ball
+  man, and the rollout exploits that multi-step opening harder than the made
+  steals save. An ungated gamble leaks (cutoff-only +21% → +cutoff+gamble +71%).
+  So the read fires only with **nothing to lose**: the loose handler has already
+  bulled into a near-certain finish (inside `GAMBLE_THREAT_RIM`), where a miss
+  costs ~nothing (he scores anyway) and a strip denies the bucket. The miss cost
+  itself is unchanged (Q20 "existing cost"). In the *shipped full defense* the
+  gamble is net-positive (guarded 0.9 → 0.6 pts/poss) — its takeaways claw back
+  what the pre-existing help rotations leak.
+
+### Q39 — Why guard-vs-IDLE stays positive: the rollout offense punishes telegraphs
+**[RECORDED. Dominant residual leak is the pre-existing help rotations — a
+5a-owned re-tune, flagged, not chased here.]**
+- 5b's reads measurably suppress AI scoring vs the 5a baseline (guarded **0.9 →
+  0.6** pts/poss, FG **53 → 49**, steals **7 → 17**/game, effect **+82% →
+  +75%**), yet the corrected defense-matters *sign* stays positive (guarding
+  still RAISES AI pts/poss vs IDLE). This is not a 5b regression — it's the
+  structure of the metric × the Q25 offense:
+  - The metric's "IDLE" baseline isn't "no defense": per-possession setup hands
+    every defender a persisted `guard` order, so IDLE is **tight passive
+    man-to-man**. Against the near-optimal rollout offense, passive man gives
+    **nothing to read** (every man mirrored at the 1-step lag) and is the AI's
+    kryptonite — pure man holds it to ~0.2 pts/poss.
+  - **Any** active rotation that VACATES a man (rim-drop, double-team, an
+    overcommitted cutoff) opens a look the openness-reading rollout punishes.
+    Isolation shows the dominant leak is the **pre-existing help rotations**
+    (rim-drop + double): turning them off drops the full defense from +82% toward
+    the ~+16% pure-man floor. The on-ball cutoff (planted) and the EV-gated
+    gamble are NOT the main leak.
+- **Implication / recommended follow-up (5a-owned tuning, out of 5b scope):**
+  the committed cutoff is the first-principles replacement for the leaky rim-drop
+  (Q9). A coherent next step is to lean on the on-ball cutoff and **retire/tighten
+  the help-rotation drops** so active defense stops vacating men — that's what
+  flips the sign. Also note these reads are balanced FOR human offense, where a
+  telegraphed cutoff / gamble is a real mind-game, not a free exploit; the CPU
+  rollout is a worst-case adversary for any committed defense.
+
 ## Variation ideas to try later (compare/combine)
 
 - Accel ramp (Q4) **+** engine-internal chaining (Q3 alt) as a low-risk first

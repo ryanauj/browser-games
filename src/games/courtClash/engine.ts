@@ -175,8 +175,13 @@ const statN = (v: number): number => (v - 50) / 49 // ~[-1,1]
  *  momentum; jog is flat and reactive; null = no travel (idle / one-shot pass).
  *  `drive`/`cut` are sprint specializations (they carry their own action
  *  semantics — collision/strip/prime, off-ball cut). Defensive tracking orders
- *  (guard/double/help/steal) and the screener move at a reactive jog — a
- *  committed defensive sprint (cut off the spot, Q9) is later AI work (Q25). */
+ *  (guard/double/steal) and the screener move at a reactive jog. The DEFENSIVE
+ *  half of the commit/react read-game is `help` with `mode:'sprint'` (Q9): a
+ *  defender commits a sprint to a cutoff spot ahead of a driving handler —
+ *  telegraphed, with the same accel ramp + angle×speed bail cost as an offensive
+ *  sprint — instead of only jogging to track. A help with no mode (or jog) is the
+ *  old reactive rotation/plant. Arriving first, the cutoff defender holds the spot
+ *  and resolves as a SET body through the existing two-phase collision path. */
 function moveModeOf(o: Order): 'jog' | 'sprint' | null {
   switch (o.kind) {
     case 'idle':
@@ -186,6 +191,8 @@ function moveModeOf(o: Order): 'jog' | 'sprint' | null {
     case 'cut':
       return 'sprint'
     case 'move':
+      return o.mode === 'sprint' ? 'sprint' : 'jog'
+    case 'help':
       return o.mode === 'sprint' ? 'sprint' : 'jog'
     default:
       return 'jog'
