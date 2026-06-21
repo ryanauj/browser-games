@@ -70,7 +70,7 @@ export interface CourtProps {
   onRadialCancel: () => void
 }
 
-const DRAG_THRESHOLD = 3 // logic units
+const DRAG_THRESHOLD = 5 // logic units — high enough that a jostle on a moving train doesn't open a stray radial
 const DROP_HIT = 7 // logic-unit radius for "dropped onto this player"
 /** Release within this radius of the rim = a shot (drag-to-hoop). Shared with
  *  the radial logic in index.tsx so the ghost line and the menu agree. */
@@ -184,16 +184,25 @@ export function Court(props: CourtProps) {
 
   const pct = (v: number, span: number) => `${(v / span) * 100}%`
 
-  // Position the radial at the drop point but nudge it inward so every button
-  // stays on-court (the menu fans upward, so it needs more room above).
-  const radialAnchor = (at: Vec): React.CSSProperties => {
+  // Radial fan geometry. The menu fans away from the drop point; near the court's
+  // top edge it would clip, so it flips to fan DOWNWARD instead (bottom-fan
+  // fallback). Radius is wide enough that the buttons don't stack/overlap.
+  const RADIAL_R = 66 // fan radius (widened so 52px buttons don't clip on narrow screens)
+  const RADIAL_SPREAD = 46 // degrees between buttons
+  const radialFanDown = (at: Vec): boolean => at.y < COURT_H * 0.34
+
+  // Position the drop point but nudge it inward so every button stays on-court;
+  // reserve the bigger margin on the side the fan opens toward.
+  const radialAnchor = (at: Vec, fanDown: boolean): React.CSSProperties => {
     const rect = ref.current?.getBoundingClientRect()
     if (!rect) return { left: pct(at.x, COURT_W), top: pct(at.y, COURT_H) }
-    const SIDE = 90 // half the fan's width
-    const TOP = 94 // fan reaches up by ~58 + button radius
-    const BOTTOM = 38
+    const SIDE = 96 // half the fan's width (RADIAL_R + button radius)
+    const REACH = 104 // room the fan needs on the side it opens toward
+    const NEAR = 40 // small margin on the opposite (anchor) side
+    const top = fanDown ? NEAR : REACH
+    const bottom = fanDown ? REACH : NEAR
     const cx = Math.max(SIDE, Math.min(rect.width - SIDE, (at.x / COURT_W) * rect.width))
-    const cy = Math.max(TOP, Math.min(rect.height - BOTTOM, (at.y / COURT_H) * rect.height))
+    const cy = Math.max(top, Math.min(rect.height - bottom, (at.y / COURT_H) * rect.height))
     return { left: `${cx}px`, top: `${cy}px` }
   }
 
@@ -500,6 +509,10 @@ export function Court(props: CourtProps) {
             style={{ left: pct(p.pos.x, COURT_W), top: pct(p.pos.y, COURT_H) }}
             onPointerDown={(e) => startDrag(e, p)}
           >
+            {/* Invisible hit area floored at the 44px touch-target minimum, so a
+                near-miss grabs the player instead of firing a stray court tap —
+                without enlarging the visual token. */}
+            <span className="cc-player__hit" aria-hidden />
             <span className="cc-player__num">{p.number}</span>
             <span className="cc-player__badge" title={sig.label} aria-hidden>
               {sig.icon}
@@ -567,34 +580,40 @@ export function Court(props: CourtProps) {
       {radial && (
         <div className="cc-radial-backdrop" onPointerDown={() => onRadialCancel()}>
           {radial.note && <div className="cc-radial-note">{radial.note}</div>}
-          <div className="cc-radial" style={radialAnchor(radial.at)}>
-            {radial.items.map((it, i) => {
-              // Item 0 sits at the drop point; the rest fan out in an upward arc.
-              const sec = radial.items.length - 1
-              const j = i - 1
-              const deg = -90 + (j - (sec - 1) / 2) * 48
-              const r = i === 0 ? 0 : 58
-              const dx = i === 0 ? 0 : Math.cos(deg * (Math.PI / 180)) * r
-              const dy = i === 0 ? 0 : Math.sin(deg * (Math.PI / 180)) * r
-              return (
-                <button
-                  type="button"
-                  key={it.label}
-                  className={`cc-radial__btn ${i === 0 ? 'cc-radial__btn--primary' : ''}`}
-                  style={{ transform: `translate(calc(-50% + ${dx}px), calc(-50% + ${dy}px))` }}
-                  onPointerDown={(e) => {
-                    e.stopPropagation()
-                    it.run()
-                  }}
-                >
-                  <span className="cc-radial__icon" aria-hidden>
-                    {it.icon}
-                  </span>
-                  <span className="cc-radial__label">{it.label}</span>
-                </button>
-              )
-            })}
-          </div>
+          {(() => {
+            const fanDown = radialFanDown(radial.at)
+            const base = fanDown ? 90 : -90 // fan opens down near the top edge, else up
+            return (
+              <div className="cc-radial" style={radialAnchor(radial.at, fanDown)}>
+                {radial.items.map((it, i) => {
+                  // Item 0 sits at the drop point; the rest fan out in an arc.
+                  const sec = radial.items.length - 1
+                  const j = i - 1
+                  const deg = base + (j - (sec - 1) / 2) * RADIAL_SPREAD
+                  const r = i === 0 ? 0 : RADIAL_R
+                  const dx = i === 0 ? 0 : Math.cos(deg * (Math.PI / 180)) * r
+                  const dy = i === 0 ? 0 : Math.sin(deg * (Math.PI / 180)) * r
+                  return (
+                    <button
+                      type="button"
+                      key={it.label}
+                      className={`cc-radial__btn ${i === 0 ? 'cc-radial__btn--primary' : ''}`}
+                      style={{ transform: `translate(calc(-50% + ${dx}px), calc(-50% + ${dy}px))` }}
+                      onPointerDown={(e) => {
+                        e.stopPropagation()
+                        it.run()
+                      }}
+                    >
+                      <span className="cc-radial__icon" aria-hidden>
+                        {it.icon}
+                      </span>
+                      <span className="cc-radial__label">{it.label}</span>
+                    </button>
+                  )
+                })}
+              </div>
+            )
+          })()}
         </div>
       )}
     </div>

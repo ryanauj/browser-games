@@ -374,6 +374,18 @@
   background: radial-gradient(circle at 35% 30%, #ff8090, var(--cc-cpu));
   cursor: default;
 }
+/* Invisible hit area floored at the 44px touch-target minimum — the visual token
+   stays small (clamp above) but a near-miss still grabs the player instead of
+   firing a stray court tap. */
+.cc-player__hit {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 44px;
+  height: 44px;
+  transform: translate(-50%, -50%);
+  border-radius: 50%;
+}
 .cc-player__num {
   font-size: clamp(0.7rem, 2.6vw, 0.95rem);
   pointer-events: none;
@@ -958,6 +970,41 @@
   }
   .cc__run {
     flex: 1;
+  }
+}
+
+/* Thumb-reach Next-Step FAB — keeps the most-used control in the bottom-right
+   thumb arc so the step loop doesn't make the thumb cross the whole viewport.
+   Mobile only; on wider screens the bottom-bar button suffices. */
+.cc__fab {
+  display: none;
+  position: fixed;
+  right: calc(14px + env(safe-area-inset-right));
+  bottom: calc(16px + env(safe-area-inset-bottom));
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  border: none;
+  background: var(--cc-orange);
+  color: #1a1206;
+  font-size: 1.5rem;
+  font-weight: 900;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.55);
+  cursor: pointer;
+  touch-action: manipulation;
+  z-index: 15;
+}
+.cc__fab:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.cc__fab:active:not(:disabled) {
+  transform: translateY(1px);
+}
+@media (max-width: 640px) {
+  .cc__fab {
+    display: grid;
+    place-items: center;
   }
 }
 
