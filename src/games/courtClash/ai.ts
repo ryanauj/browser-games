@@ -183,6 +183,14 @@ const TURNOVER_PENALTY = 0.8
  *  (re-targeting would reset the accel ramp, Q12). */
 const COMMIT_HYSTERESIS = 0.1
 
+/** Clear-lane / breakaway: if NO defender is within this distance of the handler's
+ *  straight path to the rim, the lane is open and the right play is to attack the
+ *  rim and FINISH — not swing the ball back out for a jumper. In half-court man
+ *  defense the on-ball man (and any help) sit on/near that lane, so this never
+ *  trips; it fires only on a genuinely open floor (a fast break, or the no-defense
+ *  counterfactual). See the breakaway gate in planOffense. */
+const BREAKAWAY_LANE_GUARD = 12
+
 const byId = (players: Player[], id: string | null | undefined): Player | undefined =>
   id == null ? undefined : players.find((p) => p.id === id)
 
@@ -377,6 +385,17 @@ function planOffense(state: GameState, side: Side): AiPlan {
   const inRange = distToRim(handler.pos) < MAX_SHOT_RANGE * 0.95
   const needOpen = shotType(handler.pos) === 'three' ? 0.45 : 0.22
 
+  // BREAKAWAY: is the path to the rim genuinely uncontested? On an open floor a
+  // layup (~68%) and an open three (~45%) are an EV tie, so the rollout would kick
+  // it back out for the three even with NOBODY home — the depressed open-floor
+  // offense (FG-open < FG-guarded) the purist flagged. When the lane is clear the
+  // correct play is unambiguous: attack the rim and finish. Detected positionally
+  // (no defender on the line to the basket) so it fires ONLY on a true open floor /
+  // fast break and leaves the half-court drive-and-kick EV read fully intact.
+  const laneClear = !players.some(
+    (d) => d.side !== side && distToSegment(d.pos, handler.pos, BASKET) < BREAKAWAY_LANE_GUARD,
+  )
+
   interface Cand {
     orders: { playerId: string; order: Order }[]
     shoot?: string
@@ -394,17 +413,22 @@ function planOffense(state: GameState, side: Side): AiPlan {
   cands.push({ orders: assemble({ kind: 'drive', to: { ...BASKET } }), bonus: 0, label: 'drive-rim' })
   cands.push({ orders: assemble({ kind: 'drive', to: gapDrive(handler, players) }), bonus: 0, label: 'drive-gap' })
   // PULL UP / shoot from here — only when the look would actually clear the
-  // engine's take-gate, so choosing it always fires (no wasted rooted step).
-  if (inRange && here.open >= needOpen) {
+  // engine's take-gate, so choosing it always fires (no wasted rooted step). On a
+  // breakaway, only pull up once at the rim (a layup) — settling for a jumper with
+  // an open lane is exactly the mis-selection we're fixing.
+  if (inRange && here.open >= needOpen && (!laneClear || shotType(handler.pos) === 'layup')) {
     cands.push({ orders: assemble({ kind: 'idle' }), shoot: handler.id, bonus: 0, label: 'pullup' })
   }
   // KICK to a named valve (drive-and-kick): the open shooter help left behind.
-  for (const m of kickTargets(handler, players, ai)) {
-    cands.push({ orders: assemble({ kind: 'pass', toId: m.id }), bonus: 0, label: `kick-${m.id}` })
-  }
+  // Suppressed on a breakaway — with the lane open, swinging it back out is a worse
+  // look than the finish, so the handler keeps attacking the rim.
+  if (!laneClear)
+    for (const m of kickTargets(handler, players, ai)) {
+      cands.push({ orders: assemble({ kind: 'pass', toId: m.id }), bonus: 0, label: `kick-${m.id}` })
+    }
   // SET/USE a ball screen when the handler is hemmed in — the nearest teammate
   // picks the on-ball man while the handler attacks off it.
-  if (here.open < 0.5) {
+  if (!laneClear && here.open < 0.5) {
     const onBall = nearestOpponent(players, handler)
     let screener: Player | null = null
     let bestD = Infinity
