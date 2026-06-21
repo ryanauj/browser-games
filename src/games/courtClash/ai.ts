@@ -4,6 +4,9 @@ import {
   BLOCK_BASE_RIM,
   BLOCK_STAT_WEIGHT,
   CONTEST_RADIUS,
+  CUTOFF_LEAD,
+  CUTOFF_RIM_DOT,
+  CUTOFF_SPRINT_MIN,
   HELP_PAINT_RADIUS,
   MAX_SHOT_RANGE,
   OPENNESS_SHOT_WEIGHT,
@@ -13,7 +16,7 @@ import {
   SHOT_STAT_WEIGHT,
   THREE_PT_RADIUS,
 } from './constants'
-import { clampToCourt, dist, distToRim, distToSegment, nearestOpponent, openness, opponentOf, shotType } from './geometry'
+import { clampToCourt, dist, distToRim, distToSegment, nearestOpponent, openness, opponentOf, shotType, stepToward, unitTo } from './geometry'
 import { reducer } from './engine'
 import type { Action, GameState, Order, Player, Side, Vec } from './types'
 
@@ -515,6 +518,38 @@ function planDefense(state: GameState, side: Side): AiPlan {
       }
       if (helperIdx >= 0) {
         orders[helperIdx] = { playerId: ai[helperIdx].id, order: { kind: 'double', markId: handler.id } }
+      }
+    }
+
+    // COMMITTED CUTOFF (Q9). When the handler is driving a committed line — read
+    // off his REVEALED motion (sprintSpeed/sprintDir set LAST step by the engine,
+    // never his hidden this-step order, so Q16-legal) and pointed rim-ward — the
+    // on-ball defender stops trailing (you can't out-run a built-up sprint from
+    // behind) and SPRINTS to a GOAL-SIDE chokepoint on his lane to the rim, then
+    // HOLDS. The plant point is anchored toward the rim (a fixed spot the driver is
+    // heading INTO), not a spot that recedes ahead of him — so the defender can
+    // actually beat him there, stop, and become the SET body the bull contest
+    // favors (engine.driveCollision), forcing a stop/bail. He telegraphs himself
+    // (the committed sprint costs the Q5 angle×speed tax to bail) — the intended
+    // tradeoff. Gated to a real rim attack (inside the help band, not already AT the
+    // rim) so the on-ball man only abandons the trail when walling the rim pays.
+    const dir = handler.sprintDir
+    if (
+      primaryIdx >= 0 &&
+      dir &&
+      handler.sprintSpeed > CUTOFF_SPRINT_MIN &&
+      rimD > RIM_RADIUS &&
+      rimD < HELP_PAINT_RADIUS &&
+      ai[primaryIdx].stuck <= 0
+    ) {
+      const toRim = unitTo(handler.pos, BASKET)
+      const rimward = toRim ? dir.x * toRim.x + dir.y * toRim.y > CUTOFF_RIM_DOT : false
+      if (rimward) {
+        // A point CUTOFF_LEAD units goal-side of the handler, toward the rim — in
+        // his lane, ahead of him, reachable. The engine auto-holds on arrival, so a
+        // defender who beats him there is planted (SET) when the drive arrives.
+        const spot = clampToCourt(stepToward(handler.pos, BASKET, CUTOFF_LEAD))
+        orders[primaryIdx] = { playerId: ai[primaryIdx].id, order: { kind: 'help', to: spot, mode: 'sprint' } }
       }
     }
   }

@@ -223,6 +223,25 @@ export const STALL_MIN_DRIVE = 4
  *  pulls the nearest help defender over to protect the rim. */
 export const HELP_PAINT_RADIUS = 24
 
+// --- Committed defensive cutoff (Q9) ---------------------------------------
+// The defensive half of the commit/react read-game. When the handler is on a
+// committed drive line, the on-ball defender stops trailing (a lost cause vs a
+// built-up sprint) and SPRINTS to a spot ahead of the drive to beat him there —
+// reusing the offensive sprint machinery (accel ramp + angle×speed bail), then
+// planting as the SET body the bull contest favors (engine.driveCollision).
+/** Floor units ahead of the handler (along his REVEALED sprint heading) the
+ *  cutoff defender targets — ~1.5 sprint steps, far enough to actually get in
+ *  front, close enough that the spot stays on the live drive. */
+export const CUTOFF_LEAD = 9
+/** Only commit the cutoff when the handler's revealed sprint speed clears this —
+ *  i.e. he's genuinely downhill on a committed line, not jogging/repositioning (a
+ *  flat jog tops ~5-8; a building drive passes this within a step or two). */
+export const CUTOFF_SPRINT_MIN = 6
+/** The handler's heading must point this much toward the rim (dot of his sprint
+ *  heading with the unit-to-rim) for the drive to be a rim threat worth cutting
+ *  off — a sprint angled away from the basket isn't an attack to wall. */
+export const CUTOFF_RIM_DOT = 0.3
+
 // ---------------------------------------------------------------------------
 // Lead passes. You aim a pass at a spot; a cutter gathers it in stride. The
 // catch corridor is "anywhere along a mover's route they can still reach this

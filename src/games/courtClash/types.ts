@@ -46,7 +46,7 @@ export type Order =
   // defense
   | { kind: 'guard'; markId: string } // man-to-man (default)
   | { kind: 'double'; markId: string } // send a second defender at the ball
-  | { kind: 'help'; to: Vec } // rotate to a spot / fill a gap
+  | { kind: 'help'; to: Vec; mode?: MoveMode } // rotate to a spot / fill a gap; mode='sprint' = committed cutoff (Q9)
   | { kind: 'steal'; markId: string } // gamble for a strip/pick (high risk)
 
 export type OrderKind = Order['kind']
