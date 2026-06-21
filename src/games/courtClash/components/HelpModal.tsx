@@ -37,9 +37,10 @@ export function HelpModal({ onClose }: Props) {
 
         <h3 className="cc-help__h">🏀 Offense — get someone open</h3>
         <p className="cc-help__sec">
-          Openness is everything: a wide-open role player beats a covered star. Use <em>Pass</em>, <em>Cut</em> and{' '}
-          <em>Drive</em>, and set a <em>Screen</em> for a teammate — drag a player onto that teammate (or onto a
-          defender to pick that man) and your screener hangs the defender up for a step or two (watch for the 💥). A drive
+          Openness is everything: a wide-open role player beats a covered star. Use <em>Pass</em> and{' '}
+          <em>Sprint</em> (attack the rim with the ball, or break open off it), and set a <em>Screen</em> for a teammate
+          — drag a player onto that teammate (or onto a defender to pick that man) and your screener hangs the defender
+          up for a step or two (watch for the 💥). A sprint to the rim
           gets downhill for a finishing boost, but defenders clogging your lane <em>slow it down</em> — a wall of
           bodies bottles it up (you'll see “Bottled up!”), so attack a gap or kick it out, and a defender right on you
           can still strip it. The ring on the ball is your shot quality:{' '}
@@ -47,7 +48,7 @@ export function HelpModal({ onClose }: Props) {
           bad. Inside the arc is 2, beyond it 3.
         </p>
         <p className="cc-help__sec">
-          <strong>Hit a cutter in stride:</strong> send a teammate on a <em>Cut</em>, then drag the ball handler to the
+          <strong>Hit a cutter in stride:</strong> send a teammate on a <em>Sprint</em>, then drag the ball handler to the
           open spot <em>ahead</em> of them and pick <em>🎯 Lead pass</em>. They catch it on the move — a give-and-go to
           the rim. You choose their next move once they gather it.
         </p>
@@ -55,7 +56,8 @@ export function HelpModal({ onClose }: Props) {
         <h3 className="cc-help__h">🛡️ Defense — lock down</h3>
         <p className="cc-help__sec">
           Drag a player onto an opponent to <em>Guard</em> (or switch), <em>Double</em> the ball, or <em>Steal</em>{' '}
-          (a gamble) — or onto a spot to <em>Help</em>. Force a miss or a steal, or run the{' '}
+          (a gamble) — or onto a spot to <em>Move</em> into help, or <em>Sprint</em> to commit to a cutoff. Force a miss
+          or a steal, or run the{' '}
           <em>{SHOT_CLOCK_STEPS}-step shot clock</em> out for a turnover.
         </p>
 
@@ -64,14 +66,14 @@ export function HelpModal({ onClose }: Props) {
           Tap anyone — yours or the CPU's — to scout. Each badge flags a standout skill; the panel shows all eight
           0–99 stats, <span className="cc-help__good">green</span> (strong) to{' '}
           <span className="cc-help__bad">red</span> (weak). The solid ring on a selected player is their <em>move</em>{' '}
-          reach this step; the dashed outer ring is the farther <em>cut/drive</em> burst — more ground, more stamina.
+          reach this step; the dashed outer ring is the farther <em>sprint</em> burst — more ground, more stamina.
         </p>
 
         <h3 className="cc-help__h">👀 Reading the floor</h3>
         <p className="cc-help__sec">
           You see <em>your own</em> order lines only. Read the CPU from <strong>motion</strong>: a sprinter trails a{' '}
           <em>streak</em> back along its path — longer and brighter the faster (and more committed) the run, so a hard
-          drive is the most <em>telegraphed</em> and the costliest for them to cut off. A jog leaves no streak. When a
+          sprint is the most <em>telegraphed</em> and the costliest for them to cut off. A jog leaves no streak. When a
           shooter <em>roots and gathers</em> (a 🎯 windup ring), that's your window to close out. A pass{' '}
           <em>travels</em> as a loose ball — step into its lane to pick it off.
         </p>
