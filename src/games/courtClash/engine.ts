@@ -56,6 +56,7 @@ import {
   STALL_MIN_DRIVE,
   STAMINA_COST,
   STRIP_BASE,
+  STRIP_FLOOR,
   STRIP_STAT_WEIGHT,
   STUCK_FACTOR,
   THREE_PT_RADIUS,
@@ -1070,10 +1071,19 @@ function runStep(state: GameState, playerShootId?: string): GameState {
     if (handler.order.kind === 'drive') {
       const onBall = players.find((d) => d.side !== handler.side && dist(d.pos, handler.pos) <= 6)
       if (onBall) {
-        const p = clampP(
-          STRIP_BASE +
-            (statN(onBall.attr.perimeterD) - statN(handler.attr.handle)) * STRIP_STAT_WEIGHT +
-            (handler.bull > 0 ? BULL_STRIP_BONUS : 0), // loose handle from bulling a body
+        // NOT clampP: this strip is rolled EVERY step the handler drives within reach
+        // of a defender, so it COMPOUNDS over a multi-step drive — clampP's 0.03 floor
+        // alone summed to ~6 strips/game (a ~22%/poss steal rate, ≈3× NBA) and made
+        // STRIP_BASE inert (it sat under the floor). A strip-specific lower floor lets
+        // the per-step base actually control the compounded rate. (5d Fix 1.)
+        const p = Math.max(
+          STRIP_FLOOR,
+          Math.min(
+            0.97,
+            STRIP_BASE +
+              (statN(onBall.attr.perimeterD) - statN(handler.attr.handle)) * STRIP_STAT_WEIGHT +
+              (handler.bull > 0 ? BULL_STRIP_BONUS : 0), // loose handle from bulling a body
+          ),
         )
         if (r.roll(p)) {
           events.push({ kind: 'steal', by: onBall.id, from: handler.pos, to: { ...onBall.pos }, text: `${onBall.name} strips the drive!` })

@@ -338,9 +338,20 @@ export const PASS_STEAL_STAT_WEIGHT = 0.24
 /** A defender this close to the pass lane can attempt a deflection. */
 export const PASS_LANE_RADIUS = 8
 
-/** On-ball strip while driving into a set defender. Per drive-beat, so kept low
- *  — it compounds over a multi-beat drive to the rim. */
-export const STRIP_BASE = 0.05
+/** On-ball strip while driving into a set defender. Rolled EVERY step the handler
+ *  drives within reach of a defender, so it COMPOUNDS over a multi-step drive to the
+ *  rim — kept very low per step. 5d (Fix 1): 0.05 → 0.015. The original 0.05 (and
+ *  even 0.03) sat at/under the shared clampP 0.03 floor, so the per-step rate was
+ *  pinned at 0.03 and STRIP_BASE was inert: it compounded to ~6.7 strips/game (a
+ *  ~23%/possession steal rate, ≈3× NBA). The strip now uses its own lower floor
+ *  (STRIP_FLOOR) so the base actually controls the compounded composite, landing it
+ *  in a realistic ~10–15%/possession band — without killing the read (a contained
+ *  drive still risks the ball, preserving the trailing-man strip threat Q40 showed
+ *  is what makes the rollout kick out for threes). */
+export const STRIP_BASE = 0.022
+/** Per-step floor for the on-ball strip (deliberately below clampP's shared 0.03 —
+ *  see STRIP_BASE; without this the compounded strip can't be tuned down). */
+export const STRIP_FLOOR = 0.010
 export const STRIP_STAT_WEIGHT = 0.24
 
 /** Steal-gamble order (Q20): a defender lunges for the strip. Base reward + a big
