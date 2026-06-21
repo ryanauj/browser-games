@@ -35,6 +35,13 @@
   white-space: nowrap;
 }
 .cc__back {
+  display: inline-flex;
+  align-items: center;
+  /* ~44px tap target without shifting the header: pad it out, pull the left edge
+     back by the same amount so the label still lines up with the viewport gutter. */
+  min-height: 44px;
+  padding: 0 8px;
+  margin-left: -8px;
   color: var(--cc-dim);
   text-decoration: none;
   font-weight: 600;
@@ -91,7 +98,7 @@
   align-items: flex-start;
   gap: 1px;
   padding: 6px 11px;
-  min-height: 40px;
+  min-height: 44px;
   font-size: 0.85rem;
 }
 .cc-action__label {
@@ -230,7 +237,7 @@
 }
 .cc__coach-x {
   flex: none;
-  min-height: 36px;
+  min-height: 40px;
   padding: 0 10px;
   border: 1px solid var(--cc-line);
   border-radius: 8px;
