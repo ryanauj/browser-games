@@ -898,6 +898,36 @@ the strip rate or the offense.]**
   rim ideal is the same structural one 5a/5b flagged (in defense-less self-play
   the rim is genuinely uncontested — a help-rotation/rim-wall job, deferred).
 
+### Q41 — Honest "does defense matter?" baseline: a TRUE no-defense counterfactual (Fix 3 — the big one)
+**[CHOSEN: replace the IDLE baseline with the player's five PARKED at half-court
+(removed from the play) — guarded pts/poss vs genuinely OPEN floor.]**
+- **The experiment was broken by design, not just math (5a fixed the division).**
+  The old "IDLE" baseline wasn't "no defense": per-possession setup hands every
+  defender a persisted `guard` order and seats them goal-side, so IDLE = five
+  passive bodies still sitting in passing lanes and clogging the paint. The
+  offense scored *less* per possession against those clogging-but-present bodies
+  than against a spread man defense it can read — so guarding printed as
+  *raising* AI efficiency (+75–82%). That's a baseline artifact, not a defensive
+  truth.
+- **Fix (balance.ts / test scaffolding only — reducer untouched):** a new `'open'`
+  player policy. Whenever the AI is on offense, `parkDefenders` sends the player's
+  five to half-court (y≈98, beyond every contest radius), idle, no momentum — a
+  genuinely open floor. Verified: AI-handler openness reads **1.00** and no
+  defender comes within a contest radius during AI offense. "Defense effect" is now
+  guarded pts/poss vs *open-floor* pts/poss; NEGATIVE = guarding suppresses scoring.
+- **VERDICT — yes, guarding now suppresses scoring.** With the 5c reads (reserved
+  cutoff + tamed gamble) the honest metric prints:
+  - player **GUARDS: 0.9** pts/poss · player **NO DEFENSE (open floor): 1.6**
+    pts/poss · **defense effect −47%** (over equal first-N possession samples,
+    same 60 seeds). Guarding holds the AI ~0.7 pts/poss below an open floor — the
+    cutoff/man defense is biting. (The old metric on this same build still printed
+    *+~80%* vs the clogging IDLE baseline — same defense, the number was the
+    baseline.)
+- **Why this is the honest comparison:** removing the bodies isolates the
+  *contest* effect (closeouts, the planted rim/cutoff body, lane coverage) from
+  the *clog* artifact (a passive body that merely shortens a possession by being
+  in the way). The earlier inversion was the clog; the −47% is the contest.
+
 ## Variation ideas to try later (compare/combine)
 
 - Accel ramp (Q4) **+** engine-internal chaining (Q3 alt) as a low-risk first
