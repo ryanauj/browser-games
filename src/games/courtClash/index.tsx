@@ -144,6 +144,17 @@ export default function CourtClash() {
     setCoachStep(-1)
   }, [])
 
+  // Advance one step (shared by the bottom-bar button and the thumb-reach FAB).
+  const stepDisabled = animating || state.phase !== 'play'
+  const handleNextStep = useCallback(() => {
+    game.runStep()
+    setCoachStep((s) => {
+      if (s < 0) return s
+      writeStored(COACHED_KEY, '1')
+      return -1
+    })
+  }, [game])
+
   const yourPlayers = useMemo(() => state.players.filter((p) => p.side === YOU), [state.players])
   const byId = useCallback((id: string | null) => state.players.find((p) => p.id === id), [state.players])
   const ballHandler = byId(state.ballHandlerId)
@@ -590,16 +601,29 @@ export default function CourtClash() {
           <button
             type="button"
             className="cc-btn cc-btn--primary cc__run"
-            onClick={() => {
-              game.runStep()
-              if (coachStep >= 0) finishCoach()
-            }}
-            disabled={animating || state.phase !== 'play'}
+            onClick={handleNextStep}
+            disabled={stepDisabled}
           >
             ▶ Next Step
           </button>
         </div>
       </div>
+
+      {/* Thumb-reach Next-Step FAB (mobile): the drag→radial→bottom-bar loop made
+          the thumb cross the whole viewport each step. A bottom-right floater keeps
+          the most-used control in reach. Mirrors the bar button; hidden on wide
+          screens via CSS. */}
+      {state.phase === 'play' && (
+        <button
+          type="button"
+          className="cc__fab"
+          onClick={handleNextStep}
+          disabled={stepDisabled}
+          aria-label="Next step"
+        >
+          ▶
+        </button>
+      )}
 
       <GameLog lines={state.log} />
 
