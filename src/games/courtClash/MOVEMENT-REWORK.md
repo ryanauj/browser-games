@@ -717,6 +717,79 @@ the move order (the Q28 retention). The literal verb deletion (fold drive/cut in
 move+mode) is still deferred — folding it now would churn the UI/AI surface the
 other sessions are building against, for no behavioral gain.
 
+## Session 5a — balance convergence pass (fix the metric, tune rim↔three)
+
+The movement rework merged GREEN but self-play was a rim-or-bust game (layup
+82% / two 1% / three 17%, FG 64, 3P 21, 1.1 pts/poss) and the defense-matters
+harness metric printed nonsense (−625%). This session fixed the metric, then
+tuned the scoring/contest balance toward a distribution that reads like
+basketball. Balance stays advisory (Q27); determinism is the only hard gate
+(GREEN across 10 seeds after every change).
+
+### Q34 — Honest "does defense matter?" metric (fix the −625% inversion)
+**[CHOSEN: per-possession compare over EQUAL first-N possession samples, bounded]**
+- The old `balance.ts` metric did `(idlePP − guardPP)/idlePP` over RAW possession
+  totals and printed **−625%**. Doubly confounded: (a) an idle game never ends
+  (the player scores 0), so it runs to STEP_CAP and the AI piles up ~5× the
+  possessions of a guarded game that reaches 15 and stops (~66 vs ~15 poss/game);
+  (b) those extra trips are garbage-time that drag the idle average down, and
+  dividing the delta by the tiny idle rate magnified the sign error.
+- **Fix:** track AI points per AI offensive possession in order; for each seed
+  compare the **first N** AI possessions of both runs (N = the shorter run's
+  count — equal samples, no garbage tail). Report the effect as a swing bounded
+  to **[−100%, +100%]** (`(guardPP − idlePP)/max(guardPP, idlePP)`), which can
+  never print a −625%.
+- **TRUE finding (confirms the playtest panel): guarding does NOT suppress AI
+  scoring — it RAISES it (+82%).** Idle defenders freeze goal-side = SET (zero
+  motion) = max bull anchor, so they wall every drive and the possession dies on
+  the clock; active guarding pulls them off that planted spot, which is when the
+  AI scores. So "defense matters" is currently a *rim-anchor* artifact, not a
+  contest effect — the real defensive lever (help rotation that walls the lane
+  while staying set) is Session 5b. The fixed metric is what makes 5b measurable.
+
+### Q35 — Rim↔three rebalance (kill the 82/1/17 extreme)
+**[CHOSEN: trim the rim freebie + buff open threes; constants below]**
+- **Rim was too cheap.** A SET even-strength defender only *tied* an average
+  full-speed bull (driverPush ≈ 2.105 = mass 1.0 + 0.1×sprintTop 11.05 vs set
+  anchor 1.0 + `SET_ANCHOR_BONUS` 1.1 = 2.10), so the average drive bulled
+  through by default. **`SET_ANCHOR_BONUS` 1.1 → 1.3** (set anchor 2.30 > 2.105):
+  a planted even-strength defender now STOPS the average drive; the bull becomes
+  a strength/speed-edge play. **`DRIVE_FINISH_BONUS` 0.12 → 0.05** and
+  **`SHOT_BASE.layup` 0.52 → 0.48** so an open finish (≈68%) is good but not a
+  free 1.6-EV bucket.
+- **Threes were too weak.** `shotMakeChance` taxed range at **×0.45**
+  (top-of-key d≈47–53 lost 0.06–0.14 on top of the closeout contest), so open
+  threes realized ~21%. **rangePenalty coefficient 0.45 → 0.28** and
+  **`SHOT_BASE.three` 0.22 → 0.25**: open looks now land at ~45–47% (≈34–36% for
+  an average shooter), realistic; self-play realized 3P sits at **27%** because
+  the closeout-during-gather contests them to openness ~0.44 at release (a real,
+  intended tax — open looks are the 5b/spacing payoff).
+- **Result:** mix **82/1/17 → 67/4/30**, 3P 21 → 27, FG 64 → 51, pts/poss
+  1.1 → 0.9. The remaining gap to the ~40/35/25 target is **structural and
+  deferred to 5b**: in defense-less self-play the rim is genuinely uncontested
+  (layups release with block-prob ~0.09 — the driver attacks the *gap beside*
+  the planted Center, a help-rotation matter), so driving is correctly the best
+  EV. Pushing the make-tables further to force 40/35 in self-play would over-fit
+  a floor with no lane defense and make open looks unrealistic. Pace held at
+  **~36 steps/possession** (unchanged per-poss); not touching the accel windup,
+  since the task's precondition ("once the rim isn't a free bucket") isn't met
+  until 5b walls the lane.
+
+### Q36 — AI shot-value ↔ engine contest alignment (`shotEV` ignored block)
+**[CHOSEN: fold a positional block estimate into `shotEV`]**
+- The panel flagged that `shotEV` (the CPU's rollout valuation) reads the
+  open-floor make and **ignored `blockChance` at release** — so it overvalued a
+  rim finish (drives into a rim protector it can't see). Confirmed. While the rim
+  was a free bucket this matched reality; re-nerfing the rim (Q35) makes the
+  misalignment bite.
+- **Fix:** `shotEV` now multiplies make by `(1 − blockEstimate)`, a cheap mirror
+  of `engine.blockChance` (nearest contester within `CONTEST_RADIUS`, steeper at
+  the rim, scaled by proximity × interior D) **replicated** in `ai.ts` to keep
+  the ai←engine dependency one-way. A contested rim attack now scores below a
+  clean kickout in the rollout. Effect in self-play is modest today (real
+  finishes are uncontested, block ~0.09) but it's the honest valuation and will
+  matter once 5b puts a body at the rim. Pure/deterministic (no RNG) — gate GREEN.
+
 ## Variation ideas to try later (compare/combine)
 
 - Accel ramp (Q4) **+** engine-internal chaining (Q3 alt) as a low-risk first

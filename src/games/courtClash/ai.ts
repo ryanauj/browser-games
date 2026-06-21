@@ -1,5 +1,9 @@
 import {
   BASKET,
+  BLOCK_BASE_PERIMETER,
+  BLOCK_BASE_RIM,
+  BLOCK_STAT_WEIGHT,
+  CONTEST_RADIUS,
   HELP_PAINT_RADIUS,
   MAX_SHOT_RANGE,
   OPENNESS_SHOT_WEIGHT,
@@ -7,12 +11,39 @@ import {
   RIM_RADIUS,
   SHOT_BASE,
   SHOT_STAT_WEIGHT,
+  THREE_PT_RADIUS,
 } from './constants'
 import { clampToCourt, dist, distToRim, distToSegment, nearestOpponent, openness, opponentOf, shotType } from './geometry'
 import { reducer } from './engine'
 import type { Action, GameState, Order, Player, Side, Vec } from './types'
 
 const statN = (v: number): number => (v - 50) / 49
+
+/** Positional estimate of the block risk on a shot from here — a cheap mirror of
+ *  engine.blockChance (nearest contester within CONTEST_RADIUS, steeper at the
+ *  rim, scaled by proximity and the contester's interior D). Replicated rather
+ *  than imported to keep ai←engine one-way. Without this the CPU OVERVALUES a rim
+ *  finish — it reads the open-floor make and ignores the rim protector waiting at
+ *  release, so it drives into a wall it can't see (the EV↔engine misalignment the
+ *  panel flagged). Folding it in lets a contested rim attack score below a clean
+ *  kickout, which is what tips the rollout off the auto-drive. */
+function blockEstimate(p: Player, players: Player[]): number {
+  let bestDist = Infinity
+  let blocker: Player | null = null
+  for (const d of players) {
+    if (d.side === p.side) continue
+    const dd = dist(d.pos, p.pos)
+    if (dd < bestDist && dd <= CONTEST_RADIUS) {
+      bestDist = dd
+      blocker = d
+    }
+  }
+  if (!blocker) return 0
+  const rimCloseness = 1 - Math.min(1, distToRim(p.pos) / THREE_PT_RADIUS)
+  const base = BLOCK_BASE_PERIMETER + (BLOCK_BASE_RIM - BLOCK_BASE_PERIMETER) * rimCloseness
+  const proximity = 1 - bestDist / CONTEST_RADIUS
+  return Math.max(0, Math.min(0.97, base * (0.4 + 0.6 * proximity) + statN(blocker.attr.interiorD) * BLOCK_STAT_WEIGHT))
+}
 
 /** A quick estimate of a player's shot value from here (points × make chance),
  *  mirroring shotMakeChance's main terms. Used by the CPU to pick the best look
@@ -25,7 +56,10 @@ function shotEV(p: Player, players: Player[]): { ev: number; open: number } {
     0.03,
     Math.min(0.97, SHOT_BASE[type] + OPENNESS_SHOT_WEIGHT * (open - 0.4) + statN(skill) * SHOT_STAT_WEIGHT),
   )
-  let ev = make * (type === 'three' ? 3 : 2)
+  // Block survives separately at release (engine rolls it BEFORE the make), so the
+  // realized scoring chance is make × (1 − blockP). The rim is where this bites.
+  const scoreChance = make * (1 - blockEstimate(p, players))
+  let ev = scoreChance * (type === 'three' ? 3 : 2)
   // Long-two tax: the settled mid-range jumper is the worst shot in basketball.
   // Discount it so the CPU prefers getting to the rim or kicking out for three.
   if (type === 'two' && distToRim(p.pos) > RIM_RADIUS + 6) ev *= 0.85
