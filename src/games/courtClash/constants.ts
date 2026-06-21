@@ -234,9 +234,17 @@ export const HELP_PAINT_RADIUS = 24
  *  front, close enough that the spot stays on the live drive. */
 export const CUTOFF_LEAD = 9
 /** Only commit the cutoff when the handler's revealed sprint speed clears this —
- *  i.e. he's genuinely downhill on a committed line, not jogging/repositioning (a
- *  flat jog tops ~5-8; a building drive passes this within a step or two). */
-export const CUTOFF_SPRINT_MIN = 6
+ *  i.e. he's genuinely downhill on a committed line you can't trail (Q9: cutting
+ *  off the spot is for a built-up sprint, NOT every drive). Sprint top ≈ jog×1.7 ≈
+ *  8.5–13.6, so this is set just below top speed. 5c (Fix 2): raised 6 → 13. At 6
+ *  the cutoff fired on essentially every drive (a building drive clears 6 within a
+ *  step), so the on-ball defender abandoned the trail to sprint to a rim plant on
+ *  every possession — which FREED the drive lane (the rollout offense then attacked
+ *  the rim, dragging the mix rim-ward) and, by feeding the lone planted body bull
+ *  contacts, churned drive-strips up to ~10/game. Reserving it for true breakaways
+ *  restores the disciplined trailing man (5a containment): the mix returns to
+ *  ~62/32 and steals fall into the ~7-9 band. This is what 5b perturbed (Q40). */
+export const CUTOFF_SPRINT_MIN = 13
 /** The handler's heading must point this much toward the rim (dot of his sprint
  *  heading with the unit-to-rim) for the drive to be a rim threat worth cutting
  *  off — a sprint angled away from the basket isn't an attack to wall. */
