@@ -928,6 +928,100 @@ the strip rate or the offense.]**
   the *clog* artifact (a passive body that merely shortens a possession by being
   in the way). The earlier inversion was the clog; the −47% is the contest.
 
+## Session 6 — plan-ahead foundation (P1: queue schema + auto-run + halt policy)
+
+The foundation of plan-ahead mode: a per-player chained-order queue, an auto-run
+loop that fast-forwards steps until a halt condition, and the default halt policy.
+This is the FROZEN contract that P2 (real multi-step committed AI) and P3
+(authoring UI / control-mode toggle) build against — schema frozen first. P1
+deliberately ships only STUBS of the AI/UI layers; the per-step physics is
+unchanged (self-play stays byte-identical to Session 5d — verified game-by-game).
+
+### Q42 — Plan-ahead schema: where do chained orders live, and what is "out of plan"?
+**[CHOSEN: `Player.order` (active) + `Player.queue: Order[]` (pending chain)]**
+- `Player.order` stays the ACTIVE order executed this step. `Player.queue` is the
+  pending CHAIN that runs after it, front-to-back. When the active order COMPLETES,
+  the front of `queue` pops into `order` (engine.advanceQueues, after motion).
+- **"Out of plan"** = the active order has completed (a movement order arrived &
+  now holding per Q12, or a one-shot pass/screen resolved itself to idle) AND
+  `queue` is empty. Nothing more is committed → a decision point.
+- **Completion ≠ "order is idle."** The engine force-mutates `order` mid-step for
+  reasons that are NOT completions — a gassed sprint collapses drive→idle
+  (SPRINT_FLOOR), a shot roots the shooter to idle for its gather. The pop keys off
+  the order each player COMMITTED at the start of the step (captured by reference);
+  a pop fires only if the engine left that committed order in place (`p.order ===
+  committed`, since the engine REPLACES the order object when it intervenes) AND it
+  ran to completion (`orderDone`). This is what keeps the stub inert in existing
+  gameplay (no resurrecting a plan the engine just stopped). Reactive man-defense
+  (guard/double/steal) is never "done" — it tracks a live target, so a defender
+  mid-coverage is not a decision point.
+- All serialized in `GameState` → a planned possession replays byte-identical (the
+  determinism gate). Rejected: a single flat `order` with an "and then" pointer
+  (no clean horizon cap, harder to serialize/inspect); an out-of-band plan store
+  (breaks the pure-reducer replay contract).
+- *Telegraph (Q15) unchanged:* a queue is no more visible to the opponent than the
+  active order already was — P1 adds no opponent-queue visibility (own-orders-only).
+
+### Q43 — Halt policy: when does the auto-run stop?
+**[CHOSEN: default tier (any player out of plan) always on; per-side salient opt-in]**
+- **Default tier (always on):** halt when ANY player on EITHER side is "out of
+  plan" (Q42). The coarse, conservative decision point — the moment a committed
+  plan lapses, stop and let the coach (re)decide. A possession change resets all
+  orders to idle/guard, so the next step is naturally a halt too.
+- **Salient tier (per-side opt-in):** `GameState.haltOnSalient: {player, ai}`
+  (default both false). When a side's flag is on, the loop ALSO halts on a salient
+  event attributed to that side this step. STUB salient set =
+  possession-change / shot-resolved / turnover, kept as ONE tunable list
+  (`SALIENT_EVENT_KINDS` in engine) — the full set + finer per-side attribution is
+  deferred tuning (P2). Don't scatter the check.
+- **Mid-action carry-through:** a shot windup (`gather`) or a ball in flight
+  (`ball`) is NOT a decision point — `shouldHalt` returns false inside one so the
+  loop carries through to the resolution.
+
+### Q44 / Q48 — Auto-run mechanism: how is it equal to stepping?
+**[CHOSEN: `RUN_UNTIL_HALT` loops the SAME reducer step; no separate code path]**
+- The reducer's `RUN_UNTIL_HALT` case is a `do { s = runStep(s) } while (play &&
+  n < HALT_STEP_CAP && !shouldHalt(s))`. It calls the IDENTICAL per-step transition
+  as `RUN_STEP`, so its result is byte-identical to dispatching that many
+  `RUN_STEP`s one at a time. This is enforced as a hard gate: `pnpm determinism`
+  now also checks `RUN_UNTIL_HALT` ≡ the equivalent single-step loop across sampled
+  mid-game states, a deep-queue fast-forward (forces N≫1), and a salient-flag-on
+  variant. `HALT_STEP_CAP` (2× shot clock) guarantees termination; the same cap is
+  mirrored in the reference loop so the two never diverge.
+
+### Q45 — Plan horizon: how deep can a chain be?
+**[CHOSEN: cap `queue.length` to the shot clock (`MAX_QUEUE = SHOT_CLOCK_STEPS`)]**
+- A possession can't outlast the shot clock, so a chain can hold at most one queued
+  order per remaining step. `queue` is clamped to `MAX_QUEUE` on every write
+  (SET_ORDER, the AI stub). The precise per-step horizon (orders span many steps) is
+  deferred tuning; this conservative upper bound keeps the chain bounded and
+  serialized. Unbounded horizon is a future (Q45-future, out of scope).
+
+### Q46 — Placeholder AI queue (STUB, replaced by P2)
+**[CHOSEN: the existing planner publishes its single intent as a 1–3-deep chain]**
+- So the loop has a committed chain to fast-forward, `planOffense` attaches a
+  shallow `stubChain` (depth 2) to the chosen HANDLER order — a committed line
+  (drive/cut/sprint-move) repeats itself ("continue" keeps the accel ramp alive,
+  Q12); reactive orders get an empty chain. Lives in `ai.ts` (`stubChain`,
+  applied at the `planOffense` return). The rollout does NOT carry chains
+  (persistPlan stays chain-free) so the stub is INERT in the AI's actual
+  decisions — existing self-play is byte-identical. The real multi-step COMMITTED
+  planner (that rolls out chains and genuinely re-plans less often) is P2.
+
+### Q47 — Self-play with auto-run completes identically?
+**[CONFIRMED]** `pnpm balance` now also plays full games driven by `RUN_UNTIL_HALT`
+between decision points and confirms they finish byte-identically (score /
+possessions / steps) to the equivalent single-`RUN_STEP` loop, across 60 games.
+Advisory; the hard gate is `pnpm determinism`.
+
+### Out of scope (left as clean seams for later sessions)
+- **P2:** the real multi-step committed AI (rolls out chains, re-plans at halts not
+  every step); per-side halt tuning; the concrete salient-event set.
+- **P3:** the plan-authoring UI, queue visualization, control-mode toggle. P1 wires
+  a minimal `autoRun()` smoke-test seam in `useCourtClash` and a `SET_HALT_POLICY`
+  action; the real control surface is P3.
+- Unbounded horizon (Q45-future).
+
 ## Variation ideas to try later (compare/combine)
 
 - Accel ramp (Q4) **+** engine-internal chaining (Q3 alt) as a low-risk first

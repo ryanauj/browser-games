@@ -52,6 +52,7 @@ function buildSide(side: Side, names: string[]): Player[] {
     pos: { ...arch.spot },
     stamina: 100,
     order: { kind: 'idle' } as const,
+    queue: [] as Player['queue'],
     sprintSpeed: 0,
     sprintDir: null,
     stuck: 0,

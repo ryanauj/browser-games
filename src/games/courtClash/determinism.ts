@@ -21,9 +21,9 @@
  *      replayed twice → identical. (Exercises mid-step re-steers / bails that the
  *      AI self-play may not, e.g. flipping a sprint target to pay the redirect.)
  */
-import { createInitialState, reducer } from './engine'
+import { createInitialState, reducer, shouldHalt } from './engine'
 import { aiPlan } from './ai'
-import { BASKET } from './constants'
+import { BASKET, HALT_STEP_CAP } from './constants'
 import type { Action, GameState, Order } from './types'
 
 // Node's `process` at runtime (esbuild bundles this for node); declared here so
@@ -113,9 +113,70 @@ function scriptedActions(seed: number): Action[] {
   return a
 }
 
+/** Mid-game states sampled along a self-play game (every `every` steps), so the
+ *  auto-run check exercises varied configurations — handler driving, ball in
+ *  flight, a shot windup, fresh possessions. */
+function sampleStates(seed: number, every: number): GameState[] {
+  let s = createInitialState(seed)
+  const out: GameState[] = [s]
+  let steps = 0
+  while (s.phase === 'play' && steps < STEP_CAP) {
+    const pplan = aiPlan(s, 'player')
+    for (const o of pplan.orders) s = reducer(s, { type: 'SET_ORDER', playerId: o.playerId, order: o.order, queue: o.queue })
+    s = s.offense === 'player' && pplan.shoot ? reducer(s, { type: 'CALL_SHOT', playerId: pplan.shoot }) : reducer(s, { type: 'RUN_STEP' })
+    steps++
+    if (steps % every === 0) out.push(s)
+  }
+  return out
+}
+
+/** A state with deliberately DEEP plan-ahead chains: the player's five each get a
+ *  committed sprint chain to a far spot, so no one is "out of plan" for many steps
+ *  — forcing RUN_UNTIL_HALT to actually fast-forward (N≫1), the case that proves
+ *  the loop isn't a trivial single step. The AI defends (guard never
+ *  self-terminates, so it doesn't halt the loop). */
+function deepQueueState(seed: number): GameState {
+  let s = createInitialState(seed)
+  const off = s.players.filter((p) => p.side === 'player')
+  // Far half-court spots, away from the rim and contact — a jog relocation (no
+  // bull, no strip, no shot), so the only thing that ends the fast-forward is the
+  // chain draining or the shot clock: a long, clean auto-run.
+  const spots: { x: number; y: number }[] = [
+    { x: 50, y: 92 },
+    { x: 14, y: 88 },
+    { x: 86, y: 88 },
+    { x: 30, y: 80 },
+    { x: 70, y: 80 },
+  ]
+  off.forEach((p, i) => {
+    const order: Order = { kind: 'move', to: spots[i % spots.length], mode: 'jog' }
+    s = reducer(s, { type: 'SET_ORDER', playerId: p.id, order, queue: Array<Order>(12).fill(order) })
+  })
+  return s
+}
+
+/** Run RUN_UNTIL_HALT, and INDEPENDENTLY the equivalent loop of single RUN_STEPs
+ *  under the same stop rule + cap (shouldHalt / HALT_STEP_CAP). The two must reach
+ *  a byte-identical state — i.e. the auto-run is exactly N successive RUN_STEPs and
+ *  introduces no new nondeterminism. Returns the snapshots and the manual step
+ *  count (which the auto-run necessarily matches when the snapshots agree). */
+function autoVsManual(s0: GameState): { auto: string; manual: string; steps: number } {
+  const auto = snap(reducer(s0, { type: 'RUN_UNTIL_HALT' }))
+  let s = s0
+  let n = 0
+  if (s.phase === 'play') {
+    do {
+      s = reducer(s, { type: 'RUN_STEP' })
+      n++
+    } while (s.phase === 'play' && n < HALT_STEP_CAP && !shouldHalt(s))
+  }
+  return { auto, manual: snap(s), steps: n }
+}
+
 function main() {
   const seeds = [1, 2, 7, 42, 1234, -755680012, 99999, 5000, 7000, 8675309]
   let failures = 0
+  let maxAutoSteps = 0
 
   for (const seed of seeds) {
     // A. self-play twice → identical
@@ -131,15 +192,45 @@ function main() {
     const c2 = replay(seed, script)
     const dC = firstDiff(c1, c2)
 
-    const ok = dA === -1 && dB === -1 && dC === -1
+    // D. AUTO-RUN ≡ STEP-LOOP. RUN_UNTIL_HALT must produce a byte-identical state to
+    //    the equivalent run of single RUN_STEPs under the same halt rule — the
+    //    auto-run introduces NO new nondeterminism (a separate hard gate, per the P1
+    //    spec). Checked from many sampled mid-game states (driving, in-flight,
+    //    windups, fresh possessions), a deep-queue fast-forward (forces N≫1), and a
+    //    salient-flag-on variant (the opt-in halt tier).
+    let dD = -1
+    let dDsteps = 0
+    const states: GameState[] = [...sampleStates(seed, 17), deepQueueState(seed)]
+    for (let i = 0; i < states.length && dD === -1; i++) {
+      const v = autoVsManual(states[i])
+      if (v.auto !== v.manual) {
+        dD = i
+        dDsteps = v.steps
+      } else if (v.steps > maxAutoSteps) maxAutoSteps = v.steps
+    }
+    // Salient-flag-on variant: arm both sides' opt-in tier and re-check equivalence.
+    if (dD === -1) {
+      const armed = states.map((s) => ({ ...s, haltOnSalient: { player: true, ai: true } }))
+      for (let i = 0; i < armed.length && dD === -1; i++) {
+        const v = autoVsManual(armed[i])
+        if (v.auto !== v.manual) {
+          dD = states.length + i
+          dDsteps = v.steps
+        }
+      }
+    }
+
+    const ok = dA === -1 && dB === -1 && dC === -1 && dD === -1
     if (!ok) {
       failures++
-      console.log(`✗ seed ${seed}: self-play@${dA}  replay@${dB}  scripted@${dC}  (actions=${r1.actions.length})`)
+      console.log(`✗ seed ${seed}: self-play@${dA}  replay@${dB}  scripted@${dC}  auto-run@${dD}(n=${dDsteps})  (actions=${r1.actions.length})`)
       const [x, y, d] = dA !== -1 ? [r1.states, r2.states, dA] : dB !== -1 ? [r1.states, b, dB] : [c1, c2, dC]
-      console.log(`   expected: ${x[d]?.slice(0, 240)}`)
-      console.log(`   actual:   ${y[d]?.slice(0, 240)}`)
+      if (d !== -1) {
+        console.log(`   expected: ${x[d]?.slice(0, 240)}`)
+        console.log(`   actual:   ${y[d]?.slice(0, 240)}`)
+      }
     } else {
-      console.log(`✓ seed ${seed}: ${r1.actions.length} actions — self-play, replay & scripted all byte-identical`)
+      console.log(`✓ seed ${seed}: ${r1.actions.length} actions — self-play, replay, scripted & auto-run≡step-loop all byte-identical`)
     }
   }
 
@@ -147,7 +238,14 @@ function main() {
     console.log(`\nDETERMINISM GATE: RED — ${failures}/${seeds.length} seeds diverged. Fix before continuing.`)
     process.exit(1)
   }
-  console.log(`\nDETERMINISM GATE: GREEN — ${seeds.length} seeds replay byte-identical.`)
+  if (maxAutoSteps <= 1) {
+    // The auto-run equivalence is trivially true if RUN_UNTIL_HALT never advances
+    // more than one step. Guard against a vacuous gate: at least one scenario must
+    // fast-forward (the deep-queue state is built to).
+    console.log(`\nDETERMINISM GATE: RED — auto-run never fast-forwarded (maxAutoSteps=${maxAutoSteps}); the equivalence check is vacuous.`)
+    process.exit(1)
+  }
+  console.log(`\nDETERMINISM GATE: GREEN — ${seeds.length} seeds replay byte-identical (incl. auto-run≡step-loop, fast-forward up to ${maxAutoSteps} steps).`)
 }
 
 main()

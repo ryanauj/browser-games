@@ -41,6 +41,19 @@ export const SHOT_CLOCK_STEPS = 45
 /** Shot clock (steps) after an offensive rebound. */
 export const SHOT_CLOCK_RESET_OREB = 22
 
+/** Plan-ahead horizon cap (Q45). A possession can't outlast the shot clock, so a
+ *  chain can hold at most one queued order per remaining step — `queue.length` is
+ *  clamped to this on every write. The precise per-step horizon (orders span many
+ *  steps) is deferred tuning; this conservative upper bound keeps the chain
+ *  bounded and serialized. */
+export const MAX_QUEUE = SHOT_CLOCK_STEPS
+/** Safety cap on RUN_UNTIL_HALT iterations (Q44). The loop halts naturally well
+ *  inside this (a possession resets to "out of plan", and the shot clock forces a
+ *  change within SHOT_CLOCK_STEPS), but a hard ceiling guarantees termination. The
+ *  auto-run AND the determinism reference loop both apply it, so they stay
+ *  byte-identical. */
+export const HALT_STEP_CAP = SHOT_CLOCK_STEPS * 2
+
 /** First to this many points, win by 2. */
 export const WIN_TARGET = 15
 export const WIN_BY = 2
