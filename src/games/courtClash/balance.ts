@@ -9,10 +9,11 @@
  * It imports only the pure engine, so it's deterministic and fast. Use it to
  * measure a change instead of guessing.
  */
-import { createInitialState, reducer, shotMakeChance } from './engine'
+import { createInitialState, reducer, shotMakeChance, shouldHalt } from './engine'
+import { HALT_STEP_CAP } from './constants'
 import { shotType } from './geometry'
 import { aiPlan } from './ai'
-import type { GameState, Player, Side, Vec } from './types'
+import type { GameState, Side, Player, Vec } from './types'
 
 const GAMES = 60
 // Steps per game cap — a possession is now ~40-60 steps (Q10), ~3.5× the old
@@ -172,6 +173,41 @@ function probeOpen(pos: { x: number; y: number }): number {
   return shotMakeChance(lone, { ...shooter, pos })
 }
 
+/** Self-play a full game driven BETWEEN DECISION POINTS by auto-run (Q44/Q48): at
+ *  each decision point (re)plan the player side, then either dispatch RUN_UNTIL_HALT
+ *  (`useAutoRun`) or the equivalent loop of single RUN_STEPs under the same halt
+ *  rule (`!useAutoRun`). The two paths re-plan at the SAME points and RUN_UNTIL_HALT
+ *  is exactly N successive RUN_STEPs, so they MUST produce the identical game — this
+ *  confirms self-play can fast-forward with auto-run and still complete identically.
+ *  Returns the final score, possession count, step count, and the total steps the
+ *  auto-run fast-forwarded across (illustrative). */
+function playGameAutoRun(seed: number, useAutoRun: boolean): { score: Record<Side, number>; possessions: number; steps: number; ffSteps: number } {
+  let s = createInitialState(seed)
+  let halts = 0
+  let ffSteps = 0
+  while (s.phase === 'play' && halts < STEP_CAP) {
+    const pplan = aiPlan(s, 'player')
+    for (const o of pplan.orders) s = reducer(s, { type: 'SET_ORDER', playerId: o.playerId, order: o.order, queue: o.queue })
+    if (s.offense === 'player' && pplan.shoot) {
+      s = reducer(s, { type: 'CALL_SHOT', playerId: pplan.shoot }) // a shot is one step in both paths
+      ffSteps += 1
+    } else if (useAutoRun) {
+      const before = s.step
+      s = reducer(s, { type: 'RUN_UNTIL_HALT' })
+      ffSteps += Math.max(1, s.step - before)
+    } else {
+      let n = 0
+      do {
+        s = reducer(s, { type: 'RUN_STEP' })
+        n++
+      } while (s.phase === 'play' && n < HALT_STEP_CAP && !shouldHalt(s))
+      ffSteps += n
+    }
+    halts++
+  }
+  return { score: s.score, possessions: s.possession, steps: s.step, ffSteps }
+}
+
 function main() {
   console.log('=== OPEN shot make% (no defender) ===')
   console.log(
@@ -264,6 +300,35 @@ function main() {
   console.log(`  player NO DEFENSE: ${f1(openPP)} pts/poss over ${openPossN} sampled poss  (FG% ${pct(openMakes, openShots)})   [open floor — five parked at half-court]`)
   console.log(`  => defense effect: ${f1(effect)}%  (${effect <= 0 ? 'guarding SUPPRESSES AI pts/poss vs open floor — defense working' : 'guarding RAISES AI pts/poss vs open floor — defense NOT biting'})`)
   console.log(`     (for reference: AI got ${f1(openTotPoss / GAMES)} poss/game vs no defense vs ${f1(guardTotPoss / GAMES)} guarded)`)
+
+  // --- Auto-run self-play (Q44/Q48): a full game fast-forwarded with RUN_UNTIL_HALT
+  //     between decision points must complete IDENTICALLY to the equivalent loop of
+  //     single RUN_STEPs (advisory confirmation; the hard gate is pnpm determinism).
+  let mismatches = 0
+  let ffTot = 0
+  let stepTot = 0
+  for (let i = 0; i < GAMES; i++) {
+    const seed = 9000 + i
+    const auto = playGameAutoRun(seed, true)
+    const manual = playGameAutoRun(seed, false)
+    const same =
+      auto.score.player === manual.score.player &&
+      auto.score.ai === manual.score.ai &&
+      auto.possessions === manual.possessions &&
+      auto.steps === manual.steps
+    if (!same) {
+      mismatches++
+      console.log(`  ✗ seed ${seed}: auto ${auto.score.player}-${auto.score.ai}/${auto.steps}st  vs  manual ${manual.score.player}-${manual.score.ai}/${manual.steps}st`)
+    }
+    ffTot += auto.ffSteps
+    stepTot += auto.steps
+  }
+  console.log(`\n=== Auto-run self-play completes identically? (RUN_UNTIL_HALT vs single RUN_STEPs, ${GAMES} games) ===`)
+  console.log(
+    mismatches === 0
+      ? `  ✓ all ${GAMES} games byte-identical final score/possessions/steps  (avg ${f1(stepTot / GAMES)} steps/game across auto-run windows)`
+      : `  ✗ ${mismatches}/${GAMES} games diverged — auto-run is NOT equivalent to the step loop (a determinism bug)`,
+  )
 }
 
 main()

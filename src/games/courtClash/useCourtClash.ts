@@ -78,6 +78,18 @@ export function useCourtClash() {
     dispatch(a)
   }, [state.phase, pulsing, pulse, record])
 
+  // Auto-run (Q44/Q48): fast-forward through committed plans until the halt policy
+  // fires (any player out of plan / an opted-in salient event). Mechanically equal
+  // to tapping Next-Beat N times. P1 SMOKE-TEST SEAM ONLY — the real plan-authoring
+  // + control-mode UI is P3.
+  const autoRun = useCallback(() => {
+    if (state.phase !== 'play' || pulsing) return
+    pulse()
+    const a: Action = { type: 'RUN_UNTIL_HALT' }
+    record(a)
+    dispatch(a)
+  }, [state.phase, pulsing, pulse, record])
+
   const callShot = useCallback(
     (playerId: string) => {
       if (state.phase !== 'play' || pulsing) return
@@ -106,6 +118,7 @@ export function useCourtClash() {
     beatMs,
     setOrder,
     runStep,
+    autoRun,
     callShot,
     newGame,
     getDebug,
