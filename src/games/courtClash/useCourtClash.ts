@@ -2,7 +2,7 @@ import { useCallback, useEffect, useReducer, useRef, useState } from 'react'
 import { BEAT_MS } from './constants'
 import { createInitialState, reducer } from './engine'
 import { captureFrame, type DebugFrame, type DebugLog } from './debug'
-import type { Action, Order } from './types'
+import type { Action, Order, Side } from './types'
 
 /**
  * Owns the reducer plus the per-step animation window and the debug log (seed +
@@ -59,9 +59,26 @@ export function useCourtClash() {
     actionsRef.current.push(a)
   }, [])
 
+  // Commit a player's plan. `queue` omitted = keep the existing chain (resume);
+  // `queue: []` = clear it; a non-empty array REPLACES it (the engine clamps to the
+  // shot-clock horizon, Q45). This is the seam the P3 authoring UI commits a full
+  // intended (order, queue) plan through atomically — there's no granular queue-edit
+  // action by design (P1 contract), so editing any link re-commits the WHOLE chain.
   const setOrder = useCallback(
-    (playerId: string, order: Order) => {
-      const a: Action = { type: 'SET_ORDER', playerId, order }
+    (playerId: string, order: Order, queue?: Order[]) => {
+      const a: Action = { type: 'SET_ORDER', playerId, order, queue }
+      record(a)
+      dispatch(a)
+    },
+    [record],
+  )
+
+  // Toggle a side's opt-in to the salient-event halt tier (Q43) — the `Action`
+  // already carries it; this is the missing hook binding. Used by the control
+  // affordance to expose the human's "pause on big plays" preference.
+  const setHaltPolicy = useCallback(
+    (side: Side, haltOnSalient: boolean) => {
+      const a: Action = { type: 'SET_HALT_POLICY', side, haltOnSalient }
       record(a)
       dispatch(a)
     },
@@ -78,17 +95,56 @@ export function useCourtClash() {
     dispatch(a)
   }, [state.phase, pulsing, pulse, record])
 
-  // Auto-run (Q44/Q48): fast-forward through committed plans until the halt policy
-  // fires (any player out of plan / an opted-in salient event). Mechanically equal
-  // to tapping Next-Beat N times. P1 SMOKE-TEST SEAM ONLY — the real plan-authoring
-  // + control-mode UI is P3.
-  const autoRun = useCallback(() => {
-    if (state.phase !== 'play' || pulsing) return
-    pulse()
-    const a: Action = { type: 'RUN_UNTIL_HALT' }
-    record(a)
-    dispatch(a)
-  }, [state.phase, pulsing, pulse, record])
+  // --- Auto-run loop (Q44/Q48 control modes) -------------------------------
+  // RUN_UNTIL_HALT fast-forwards a committed plan to the next halt (any player out
+  // of plan, or an opted-in salient event) — mechanically equal to tapping Next
+  // Step N times. The CONTROL MODES wrap it in a self-perpetuating loop: each tick
+  // dispatches one RUN_UNTIL_HALT, opens a glide window, then schedules the next
+  // tick — so the floor keeps advancing through halts until something stops it.
+  // Both modes use the same primitive: always-on auto-advance toggles it on/off;
+  // opt-in fast-forward holds it on while a button is pressed. Editing a player
+  // (or hitting Stop) calls stopAutoRun — the drag-to-edit interrupt.
+  const [autoRunning, setAutoRunning] = useState(false)
+  const runningRef = useRef(false)
+  const autoTimer = useRef<number | null>(null)
+  // Latest phase, read inside the loop tick without re-subscribing the callback.
+  const phaseRef = useRef(state.phase)
+  useEffect(() => {
+    phaseRef.current = state.phase
+  }, [state.phase])
+
+  const stopAutoRun = useCallback(() => {
+    runningRef.current = false
+    setAutoRunning(false)
+    if (autoTimer.current) {
+      window.clearTimeout(autoTimer.current)
+      autoTimer.current = null
+    }
+  }, [])
+
+  const startAutoRun = useCallback(() => {
+    if (runningRef.current || phaseRef.current !== 'play') return
+    runningRef.current = true
+    setAutoRunning(true)
+    const tick = () => {
+      if (!runningRef.current) return
+      if (phaseRef.current !== 'play') {
+        stopAutoRun()
+        return
+      }
+      pulse()
+      const a: Action = { type: 'RUN_UNTIL_HALT' }
+      record(a)
+      dispatch(a)
+      // Schedule the next halt after this one's glide settles. The game may end on
+      // this step; the next tick re-checks the phase and stops cleanly.
+      autoTimer.current = window.setTimeout(tick, beatMs)
+    }
+    tick()
+  }, [pulse, record, beatMs, stopAutoRun])
+
+  // Tear down the loop on unmount.
+  useEffect(() => () => stopAutoRun(), [stopAutoRun])
 
   const callShot = useCallback(
     (playerId: string) => {
@@ -104,8 +160,9 @@ export function useCourtClash() {
   const newGame = useCallback(() => {
     if (timer.current) window.clearTimeout(timer.current)
     setPulsing(false)
+    stopAutoRun()
     dispatch({ type: 'NEW_GAME' })
-  }, [])
+  }, [stopAutoRun])
 
   const getDebug = useCallback(
     (): DebugLog => ({ seed: seedRef.current, actions: actionsRef.current, frames: framesRef.current }),
@@ -117,8 +174,11 @@ export function useCourtClash() {
     animating,
     beatMs,
     setOrder,
+    setHaltPolicy,
     runStep,
-    autoRun,
+    autoRunning,
+    startAutoRun,
+    stopAutoRun,
     callShot,
     newGame,
     getDebug,
