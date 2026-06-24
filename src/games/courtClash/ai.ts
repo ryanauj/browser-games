@@ -72,9 +72,31 @@ function shotEV(p: Player, players: Player[]): { ev: number; open: number } {
 }
 
 export interface AiPlan {
-  orders: { playerId: string; order: Order }[]
+  /** Each entry sets a player's active `order` and, optionally, its pending
+   *  plan-ahead chain `queue` (Q42). Omitted `queue` clears it (the AI re-plans
+   *  every step, so it re-emits the chain each time). */
+  orders: { playerId: string; order: Order; queue?: Order[] }[]
   /** If set (and the AI is on offense), the CPU pulls the trigger this beat. */
   shoot?: string
+}
+
+/** STUB plan-ahead chain (P1 — Q42/Q46). The real multi-step COMMITTED planner is
+ *  P2; for now the AI expresses its single chosen intent as a shallow 1–3-deep
+ *  queue so the auto-run loop has a committed chain to fast-forward (a player with
+ *  a non-empty queue isn't "out of plan", Q43). A committed line (drive / cut /
+ *  sprint-move) repeats itself — re-committing the same target keeps the accel ramp
+ *  alive (Q12); reactive orders hold (empty chain). Replaced wholesale by P2. */
+const STUB_QUEUE_DEPTH = 2
+function stubChain(order: Order): Order[] {
+  switch (order.kind) {
+    case 'drive':
+    case 'cut':
+      return Array<Order>(STUB_QUEUE_DEPTH).fill(order)
+    case 'move':
+      return order.mode === 'sprint' ? Array<Order>(STUB_QUEUE_DEPTH).fill(order) : []
+    default:
+      return []
+  }
 }
 
 /** Canonical drive-and-kick spacing (team attacking the rim at small Y). Four
@@ -219,7 +241,7 @@ function deriveSeed(s: number): number {
 function cloneState(s: GameState): GameState {
   return {
     ...s,
-    players: s.players.map((p) => ({ ...p, pos: { ...p.pos } })),
+    players: s.players.map((p) => ({ ...p, pos: { ...p.pos }, queue: p.queue.slice() })),
     ball: s.ball
       ? { ...s.ball, pos: { ...s.ball.pos }, vel: { ...s.ball.vel }, from: { ...s.ball.from }, to: { ...s.ball.to } }
       : null,
@@ -294,6 +316,10 @@ function rolloutScore(state: GameState, side: Side, orders: { playerId: string; 
  *  window. No nested rollout (that's the recursion the guard exists to stop). */
 function persistPlan(s: GameState, side: Side): AiPlan {
   const mine = s.players.filter((p) => p.side === side)
+  // STUB: the rollout does NOT carry plan-ahead chains (queue omitted → cleared in
+  // the hypothetical). The real multi-step committed planner that rolls out chains
+  // is P2; keeping the rollout chain-free here means the P1 stub queue is inert in
+  // the AI's actual decisions — existing self-play behavior is unchanged.
   const orders = mine.map((p) => ({ playerId: p.id, order: p.order }))
   let shoot: string | undefined
   if (s.offense === side && !s.ball && !s.gather) {
@@ -463,7 +489,14 @@ function planOffense(state: GameState, side: Side): AiPlan {
       best = c
     }
   }
-  return { orders: best.orders, shoot: best.shoot }
+  // STUB plan-ahead (Q42/Q46): publish the chosen handler intent as a shallow
+  // committed chain so the auto-run loop has something to fast-forward. The handler
+  // is the only player given a chain here; off-ball spacing re-plans each step (P2
+  // emits real multi-player chains).
+  const orders = best.orders.map((o) =>
+    o.playerId === handler.id ? { ...o, queue: stubChain(o.order) } : o,
+  )
+  return { orders, shoot: best.shoot }
 }
 
 // ---- Defense: positional man + help (reads positions only — Q16-legal) ------

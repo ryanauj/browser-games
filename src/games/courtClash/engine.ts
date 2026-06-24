@@ -16,6 +16,8 @@ import {
   GATHER_BASE,
   GATHER_MIN,
   GATHER_RELIEF,
+  HALT_STEP_CAP,
+  MAX_QUEUE,
   GAMBLE_MISS_LUNGE,
   GAMBLE_MISS_STUCK,
   GAMBLE_STEAL_BASE,
@@ -100,6 +102,7 @@ export function createInitialState(seed: number = Date.now()): GameState {
     ball: null,
     gather: null,
     offense: 'player',
+    haltOnSalient: { player: false, ai: false },
     shotClock: SHOT_CLOCK_STEPS,
     score: { player: 0, ai: 0 },
     possession: 0,
@@ -124,6 +127,7 @@ function setupPossession(
   const players = state.players.map((p) => ({
     ...p,
     pos: { ...p.pos },
+    queue: [], // a fresh possession clears every pending plan-ahead chain (Q42)
     sprintSpeed: 0,
     sprintDir: null,
     stuck: 0,
@@ -242,6 +246,111 @@ function targetFor(p: Player, players: Player[], ballHandler: Player | undefined
     case 'double':
       return ballHandler ? { ...ballHandler.pos } : null
   }
+}
+
+// ---------------------------------------------------------------------------
+// Plan-ahead: chained orders, queue advance, and the halt policy (Q42–Q44).
+// ---------------------------------------------------------------------------
+
+/** Clamp a pending chain to the shot-clock horizon (Q45). Applied on every write
+ *  to `queue` (SET_ORDER, the AI stub) so a chain can never outlast a possession. */
+export function clampQueue(queue: Order[]): Order[] {
+  return queue.length > MAX_QUEUE ? queue.slice(0, MAX_QUEUE) : queue
+}
+
+/** Has `order` reached its terminal "holding" state for a player now at `p.pos`
+ *  (Q12/Q42)?
+ *   - `idle`: yes — no directive (a one-shot pass/screen clears ITSELF to idle when
+ *     it resolves, so a resolved one-shot reports complete here the next step).
+ *   - movement (move/cut/drive/help): complete once ARRIVED (within ARRIVE_EPS of
+ *     the target) — Q12 "continue to target, then hold".
+ *   - reactive man-defense (guard/double/steal) and an in-progress screen/pass:
+ *     NOT complete — they track a live target / are mid-resolution, never a
+ *     self-terminating decision point. This keeps the default halt driven by a
+ *     committed plan LAPSING, not by a defender momentarily reaching his goal-side
+ *     spot every step. Pure (positions only), so it replays exactly. */
+function orderDone(order: Order, p: Player): boolean {
+  switch (order.kind) {
+    case 'idle':
+      return true
+    case 'move':
+    case 'cut':
+    case 'drive':
+    case 'help':
+      return dist(p.pos, order.to) <= ARRIVE_EPS
+    default:
+      return false // guard / double / steal / screen / pass
+  }
+}
+
+/** Pop each player whose committed order RAN TO COMPLETION into the next link of
+ *  its chain: the front of `queue` becomes the new `order` (Q42). Runs AFTER motion
+ *  so "arrived" reads against this step's resolved positions; the popped order is
+ *  the committed directive for the NEXT step.
+ *
+ *  A pop fires only when BOTH hold:
+ *   1. the engine left this step's COMMITTED order in place (`p.order === committed`)
+ *      — i.e. it ran, it wasn't aborted. The engine REPLACES the order object when
+ *      it intervenes (a gassed sprint collapses drive→idle; a shot roots the shooter
+ *      to idle; a pass relaunches to idle), so reference-inequality flags exactly
+ *      those forced mid-step mutations. Keying the pop off completion (not off the
+ *      resulting idle) is what stops a chain from resurrecting a plan the engine
+ *      just stopped — and keeps existing per-step gameplay byte-identical.
+ *   2. that committed order is `orderDone` (arrived / idle).
+ *  Mutates `players`. */
+function advanceQueues(players: Player[], committed: Map<string, Order>): void {
+  for (const p of players) {
+    if (p.queue.length === 0) continue
+    if (p.order !== committed.get(p.id)) continue // engine collapsed/rooted/relaunched it — not a completion
+    if (!orderDone(p.order, p)) continue
+    p.order = p.queue[0]
+    p.queue = p.queue.slice(1)
+  }
+}
+
+/** Salient-event kinds (Q43) — the SINGLE tunable list for the opt-in halt tier.
+ *  STUB: start with possession-change / shot-resolved / turnover; the full set is
+ *  deferred tuning (P2). Add kinds HERE — don't scatter the check. */
+const SALIENT_EVENT_KINDS: ReadonlyArray<BeatEvent['kind']> = [
+  'shotMake',
+  'shotMiss',
+  'block',
+  'turnover',
+  'steal',
+  'shotclock',
+]
+
+/** The halt predicate for the auto-run loop (Q43/Q44) — a PURE read of the state
+ *  AFTER a step (no mutation, no dependence on iteration), so RUN_UNTIL_HALT stays
+ *  byte-identical to the equivalent run of single RUN_STEPs. Tiers:
+ *
+ *   - gameover → always halt.
+ *   - MID-ACTION carry-through: a shot windup (`gather`) or a ball in flight
+ *     (`ball`) is a committed action in progress, NOT a decision point — never halt
+ *     inside one; the loop carries to its resolution.
+ *   - SALIENT (opt-in, Q43): a side with `haltOnSalient` on halts on a salient
+ *     event attributed to it this step (by the acting player's side; an actor-less
+ *     event like a shot-clock violation arms either side's flag).
+ *   - DEFAULT (always on, Q43): any player on EITHER side is "out of plan" — its
+ *     active order is done (orderDone) AND its `queue` is empty (so the pop in
+ *     advanceQueues found nothing to chain). The coarse decision point. */
+export function shouldHalt(s: GameState): boolean {
+  if (s.phase === 'gameover') return true
+  if (s.gather || s.ball) return false
+
+  if (s.haltOnSalient.player || s.haltOnSalient.ai) {
+    for (const e of s.events) {
+      if (!SALIENT_EVENT_KINDS.includes(e.kind)) continue
+      const actor = e.by ? byId(s.players, e.by) : undefined
+      if (!actor) {
+        if (s.haltOnSalient.player || s.haltOnSalient.ai) return true
+      } else if (actor.side === 'player' ? s.haltOnSalient.player : s.haltOnSalient.ai) {
+        return true
+      }
+    }
+  }
+
+  return s.players.some((p) => p.queue.length === 0 && orderDone(p.order, p))
 }
 
 /** Resolve planted screens (Q19). A pick has two phases keyed off `screenHeld`,
@@ -952,8 +1061,18 @@ function runStep(state: GameState, playerShootId?: string): GameState {
   const plan = aiPlan({ ...state, players })
   for (const o of plan.orders) {
     const p = byId(players, o.playerId)
-    if (p) p.order = o.order
+    if (p) {
+      p.order = o.order
+      // Apply the committed chain (Q42); a plan entry without a queue clears it (the
+      // AI re-plans every step, so it re-emits its chain each time).
+      p.queue = clampQueue(o.queue ?? [])
+    }
   }
+  // Snapshot the order each player COMMITTED to this step (by reference), BEFORE the
+  // engine can collapse it (a gassed sprint → idle) or root it (a gather → idle).
+  // advanceQueues pops only links whose committed order survived to completion (the
+  // reference still matches), so a forced mid-step idle never resurrects a plan.
+  const committed = new Map(players.map((p) => [p.id, p.order]))
 
   // GATHER bookkeeping (Q17/Q33), BEFORE movement so the shooter is rooted and a
   // drive's `primed` finish flag is preserved through the windup this step. A shot
@@ -1001,6 +1120,13 @@ function runStep(state: GameState, playerShootId?: string): GameState {
     log = pushLog(log, `🚫 Illegal screen on ${screenFoul.name} — offensive foul, ${sideName(def)} ball.`)
     return setupPossession({ ...state, players, ball: null, rngState: r.next, events, log }, def, SHOT_CLOCK_STEPS, log)
   }
+
+  // PLAN-AHEAD QUEUE ADVANCE (Q42): motion resolved — pop each player whose
+  // committed order ran to completion into the next link of its chain (keyed off
+  // `committed`, so a gassed-collapsed or gather-rooted order is never mistaken for
+  // a completion). On the possession-change paths below setupPossession clears every
+  // queue anyway; on the continuing path this sets up next step's committed order.
+  advanceQueues(players, committed)
 
   // BALL IN FLIGHT (Q18): no one holds it — players have moved this step (so the
   // travel lane is read against where the defense ended up), now advance the ball
@@ -1127,13 +1253,36 @@ export function reducer(state: GameState, action: Action): GameState {
   switch (action.type) {
     case 'SET_ORDER': {
       if (state.phase !== 'play') return state
+      // `queue` omitted leaves the existing chain untouched; provided, it REPLACES
+      // it (clamped to the shot-clock horizon, Q45). This is the contract the P3
+      // authoring UI commits plans through.
       const players = state.players.map((p) =>
-        p.id === action.playerId ? { ...p, order: action.order } : p,
+        p.id === action.playerId
+          ? { ...p, order: action.order, queue: action.queue ? clampQueue(action.queue) : p.queue }
+          : p,
       )
       return { ...state, players, events: [] }
     }
     case 'RUN_STEP':
       return runStep(state)
+    case 'RUN_UNTIL_HALT': {
+      // Auto-run (Q44/Q48): apply RUN_STEP repeatedly until the halt policy fires.
+      // This is the ONLY new control flow — each iteration is the SAME reducer step
+      // (runStep), so the result is byte-identical to dispatching that many RUN_STEPs
+      // one at a time (the determinism-equivalence gate). Always advances ≥1 step.
+      // HALT_STEP_CAP guarantees termination; the same cap is mirrored in the
+      // determinism reference loop so the two stay identical.
+      if (state.phase !== 'play') return state
+      let s = state
+      let n = 0
+      do {
+        s = runStep(s)
+        n++
+      } while (s.phase === 'play' && n < HALT_STEP_CAP && !shouldHalt(s))
+      return s
+    }
+    case 'SET_HALT_POLICY':
+      return { ...state, haltOnSalient: { ...state.haltOnSalient, [action.side]: action.haltOnSalient } }
     case 'CALL_SHOT': {
       if (state.phase !== 'play') return state
       // A human shot is no longer instant: it COMMITS the shooter to a gather

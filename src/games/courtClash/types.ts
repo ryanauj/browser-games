@@ -61,6 +61,20 @@ export interface Player {
   pos: Vec
   stamina: number // 0..100
   order: Order
+  /** PLAN-AHEAD chained orders (Q42) — the FROZEN contract P2 (multi-step AI) and
+   *  P3 (authoring UI) build on. `order` is the ACTIVE order being executed this
+   *  step; `queue` is the pending CHAIN that runs after it, front-to-back. When the
+   *  active order COMPLETES — a movement order arrived & now holding (Q12), or a
+   *  one-shot (pass/screen) resolved itself to idle — the front of `queue` pops into
+   *  `order` (engine.advanceQueues). A player is **"out of plan"** when the active
+   *  order has completed AND `queue` is empty (engine.orderComplete): nothing more
+   *  is committed, so it's a decision point (the default halt tier, Q43). Fully
+   *  serialized, so a planned possession replays byte-identical (the determinism
+   *  gate). Horizon is capped to the shot clock (Q45): a possession can't outlast
+   *  the clock, so `queue.length` is clamped to MAX_QUEUE on every write. Q15
+   *  (own-orders-only telegraph) is unchanged — a queue is no more visible to the
+   *  opponent than the active order already was. */
+  queue: Order[]
   /** Current sprint speed in floor-units/step (Q4 accel ramp), 0 when jogging/
    *  idle. Serialized so sub-steps replay exactly; read pre-contact as the bull
    *  momentum term (Q22). Builds while sprinting toward an unchanged target;
@@ -147,6 +161,14 @@ export interface GameState {
   ball: Ball | null // a pass/shot traveling on its own (Q18); null = held/none
   gather: ShotGather | null // a shot in its windup (Q17); null = no shot gathering
   offense: Side // which side is on offense
+  /** Per-side halt policy for the auto-run loop (Q43). The DEFAULT tier — halt when
+   *  any player on either side is "out of plan" — is always on and needs no flag.
+   *  This flag is the per-side OPT-IN to the additional, finer SALIENT-event tier:
+   *  when `haltOnSalient[side]` is true, the loop ALSO halts on a salient event
+   *  (possession change / shot resolved / turnover) attributed to that side. Both
+   *  default false. The concrete salient-event set is deferred tuning (P2) — kept as
+   *  a single tunable list in engine (SALIENT_EVENT_KINDS), not scattered. */
+  haltOnSalient: { player: boolean; ai: boolean }
   shotClock: number // STEPS remaining this possession (Q10)
   score: Record<Side, number>
   possession: number // possession counter (animation reset key)
@@ -160,7 +182,15 @@ export interface GameState {
 }
 
 export type Action =
-  | { type: 'SET_ORDER'; playerId: string; order: Order }
+  // Set a player's active order, and optionally its pending chain (Q42). `queue`
+  // omitted leaves the existing queue untouched; `queue: []` clears it.
+  | { type: 'SET_ORDER'; playerId: string; order: Order; queue?: Order[] }
   | { type: 'RUN_STEP' } // advance exactly one step (Q10/Q11)
+  // Auto-run (Q44/Q48): apply RUN_STEP repeatedly until the halt policy fires.
+  // MECHANICALLY EQUAL to N successive RUN_STEPs — the loop calls the same reducer
+  // step, so it introduces no new state path (the determinism-equivalence gate).
+  | { type: 'RUN_UNTIL_HALT' }
+  // Toggle a side's opt-in to the salient-event halt tier (Q43).
+  | { type: 'SET_HALT_POLICY'; side: Side; haltOnSalient: boolean }
   | { type: 'CALL_SHOT'; playerId: string }
   | { type: 'NEW_GAME'; seed?: number }
