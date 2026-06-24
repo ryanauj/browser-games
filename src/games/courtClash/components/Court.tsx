@@ -67,6 +67,22 @@ export interface CourtProps {
    *  live chain from the player's current spot so you can see the path as you lay
    *  it. OWN player only (the UI only ever opens a draft for your side). */
   draft: { playerId: string; legs: Order[]; mode: MoveMode } | null
+  /** On-court floating quick-controls for the active plan (Q48/Q3 of the P3
+   *  follow-up): speed toggle, screen tool, undo, (shoot), commit, cancel — anchored
+   *  near the player so the thumb stays on the floor. null when not planning. */
+  planUI: {
+    pos: Vec
+    mode: MoveMode
+    count: number
+    screenArmed: boolean
+    isHandler: boolean
+    onMode: (m: MoveMode) => void
+    onScreen: () => void
+    onUndo: () => void
+    onShoot: () => void
+    onCommit: () => void
+    onCancel: () => void
+  } | null
   onPlayerTap: (id: string) => void
   onCourtTap: (pt: Vec) => void
   /** A drag finished on `at`; `targetId` is the player dropped onto, if any. */
@@ -100,6 +116,17 @@ function linkGlyph(o: Order): string | null {
   return null
 }
 
+/** A segment's visual class — jog (thin), sprint (thick/animated) or a screen
+ *  approach — so the path reads its own intent at a glance (not all teal dots). */
+type SegCls = 'jog' | 'sprint' | 'screen'
+function segClsOf(o: Order): SegCls {
+  if (o.kind === 'screen') return 'screen'
+  if (o.kind === 'move') return o.mode === 'sprint' ? 'sprint' : 'jog'
+  if (o.kind === 'cut' || o.kind === 'drive') return 'sprint'
+  if (o.kind === 'help') return o.mode === 'sprint' ? 'sprint' : 'jog'
+  return 'jog'
+}
+
 interface ChainLink {
   pt: Vec
   order: Order
@@ -107,7 +134,7 @@ interface ChainLink {
 }
 interface PlanChain {
   id: string
-  segs: { from: Vec; to: Vec }[]
+  segs: { from: Vec; to: Vec; cls: SegCls }[]
   links: ChainLink[]
 }
 
@@ -116,12 +143,12 @@ interface PlanChain {
  *  points that the queue viz (Q15) and the live draft (Q46) both render. */
 function buildChain(id: string, start: Vec, orders: Order[], players: Player[]): PlanChain {
   let cursor = start
-  const segs: { from: Vec; to: Vec }[] = []
+  const segs: { from: Vec; to: Vec; cls: SegCls }[] = []
   const links: ChainLink[] = []
   orders.forEach((o, i) => {
     const mp = movePoint(o, players)
     if (mp) {
-      segs.push({ from: cursor, to: mp })
+      segs.push({ from: cursor, to: mp, cls: segClsOf(o) })
       links.push({ pt: { ...mp }, order: o, seq: i + 1 })
       cursor = mp
     } else {
@@ -149,6 +176,7 @@ export function Court(props: CourtProps) {
     radial,
     handlerCue,
     draft,
+    planUI,
     onPlayerTap,
     onCourtTap,
     onDragRelease,
@@ -405,7 +433,7 @@ export function Court(props: CourtProps) {
         {planChains.map((c) => (
           <g key={`plan-${c.id}`}>
             {c.segs.map((s, i) => (
-              <line key={i} x1={s.from.x} y1={s.from.y} x2={s.to.x} y2={s.to.y} className="cc-plan-seg" />
+              <line key={i} x1={s.from.x} y1={s.from.y} x2={s.to.x} y2={s.to.y} className={`cc-plan-seg cc-plan-seg--${s.cls}`} />
             ))}
             {c.links.map((l) => (
               <circle key={l.seq} cx={l.pt.x} cy={l.pt.y} r={1.7} className="cc-plan-node" />
@@ -415,7 +443,7 @@ export function Court(props: CourtProps) {
         {draftChain && (
           <g>
             {draftChain.segs.map((s, i) => (
-              <line key={i} x1={s.from.x} y1={s.from.y} x2={s.to.x} y2={s.to.y} className="cc-draft-seg" />
+              <line key={i} x1={s.from.x} y1={s.from.y} x2={s.to.x} y2={s.to.y} className={`cc-plan-seg cc-plan-seg--${s.cls} cc-plan-seg--draft`} />
             ))}
             {draftChain.links.map((l) => (
               <circle key={l.seq} cx={l.pt.x} cy={l.pt.y} r={2.1} className="cc-draft-node" />
@@ -690,6 +718,53 @@ export function Court(props: CourtProps) {
           {gatherShooter.side === yourSide ? '🎯 Gathering — hold' : '🎯 Close out!'}
         </div>
       )}
+
+      {/* Floating plan controls (Q46/Q48) — anchored at the player being authored so
+          the thumb stays on the floor while laying the path. Speed toggle, screen
+          tool, undo, (shoot, handler only), commit, cancel. stopPropagation keeps a
+          button tap from also dropping a waypoint on the court surface. */}
+      {planUI &&
+        (() => {
+          // Keep the cluster on-court (the court clips overflow): bias the X anchor
+          // toward the near edge, and flip above the token in the bottom third.
+          const tx = planUI.pos.x < 24 ? '-12%' : planUI.pos.x > 76 ? '-88%' : '-50%'
+          const ty = planUI.pos.y > 66 ? 'calc(-100% - 26px)' : '26px'
+          return (
+            <div
+              className="cc-planmenu"
+              style={{ left: pct(planUI.pos.x, COURT_W), top: pct(planUI.pos.y, COURT_H), transform: `translate(${tx}, ${ty})` }}
+              onPointerDown={(e) => e.stopPropagation()}
+              role="group"
+              aria-label="Plan controls"
+            >
+          <div className="cc-planmenu__seg">
+            <button type="button" className={`cc-seg${planUI.mode === 'jog' ? ' cc-seg--on' : ''}`} onClick={planUI.onMode.bind(null, 'jog')}>
+              👟
+            </button>
+            <button type="button" className={`cc-seg${planUI.mode === 'sprint' ? ' cc-seg--on' : ''}`} onClick={planUI.onMode.bind(null, 'sprint')}>
+              ⚡
+            </button>
+          </div>
+          <button type="button" className={`cc-planmenu__btn${planUI.screenArmed ? ' cc-planmenu__btn--armed' : ''}`} onClick={planUI.onScreen} title="Set a screen at a spot">
+            🧱
+          </button>
+          <button type="button" className="cc-planmenu__btn" onClick={planUI.onUndo} disabled={planUI.count === 0} title="Undo last waypoint">
+            ↶
+          </button>
+          {planUI.isHandler && (
+            <button type="button" className="cc-planmenu__btn" onClick={planUI.onShoot} title="Shoot now">
+              🏀
+            </button>
+          )}
+          <button type="button" className="cc-planmenu__btn cc-planmenu__btn--ok" onClick={planUI.onCommit} disabled={planUI.count === 0} title="Commit the plan">
+            ✓<span className="cc-planmenu__n">{planUI.count}</span>
+          </button>
+              <button type="button" className="cc-planmenu__btn cc-planmenu__btn--x" onClick={planUI.onCancel} title="Cancel">
+                ✕
+              </button>
+            </div>
+          )
+        })()}
 
       {flash && <div className={`cc-flash cc-flash--${flash.tone}`}>{flash.text}</div>}
 
