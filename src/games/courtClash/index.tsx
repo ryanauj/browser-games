@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { BASKET, LEAD_CATCH_RADIUS, PASS_LANE_RADIUS, SPRINT_FLOOR, WIN_TARGET, riskOf, type Risk } from './constants'
+import { BASKET, LEAD_CATCH_RADIUS, MAX_QUEUE, PASS_LANE_RADIUS, SPRINT_FLOOR, WIN_TARGET, riskOf, type Risk } from './constants'
 import { passStealChance, shotMakeChance } from './engine'
 import { dist, distToSegment, leadCatch, nearestOpponent, reachOf, stepToward } from './geometry'
 import { useCourtClash } from './useCourtClash'
-import type { BeatEvent, Order, Player, Side, Vec } from './types'
+import type { BeatEvent, MoveMode, Order, Player, Side, Vec } from './types'
 import { AttrPanel } from './components/AttrPanel'
 import { Court, HOOP_HIT, type BallFlight, type RadialItem } from './components/Court'
 import { DebugPanel } from './components/DebugPanel'
@@ -22,7 +22,7 @@ const COACHED_KEY = 'courtclash-coached'
  *  in-flow definition of a "step" (otherwise buried in the Help modal). */
 const COACH_STEPS = [
   '👋 You\'re on offense. The glowing 🏀 token is your ball handler — tap them (or drag) to give the first order.',
-  '👇 Now pick one of the actions below for this player. (A "step" = one simultaneous move by all players; ▶ Next Step plays it out.)',
+  '👇 Now pick one of the actions below for this player — or 📋 Plan a multi-step chain. (A "step" = one simultaneous move by all players; the ▶ button down right plays it out.)',
 ]
 const YOU: Side = 'player'
 /** Floor-unit radius for treating overlapping sprites as a tappable stack. */
@@ -122,6 +122,19 @@ type Pending =
   | { playerId: string; need: 'point'; make: (pt: Vec) => Order; hint: string; clampReach?: boolean }
   | { playerId: string; need: 'teammate' | 'enemy'; make: (id: string) => Order; hint: string; risk?: 'pass' }
 
+/** A plan being AUTHORED for one of your players (Q46 hybrid authoring). `legs` is
+ *  the full intended chain held in LOCAL state — assembled here, committed atomically
+ *  with one SET_ORDER (legs[0] → order, legs[1..] → queue). There's no granular
+ *  queue-edit on the engine (P1 contract): editing any link re-commits the WHOLE
+ *  chain, so the UI must hold it. `mode` is the jog/sprint stance applied to the
+ *  NEXT movement waypoint laid (Q13). */
+type PlanDraft = { playerId: string; legs: Order[]; mode: MoveMode }
+
+/** Control-mode for the transport (Q48). `auto` = always-on auto-advance (a sticky
+ *  Run toggle that fast-forwards through halts until you Stop or edit); `manual` =
+ *  opt-in fast-forward (single-step by default, press-and-hold to run a stretch). */
+type ControlMode = 'auto' | 'manual'
+
 export default function CourtClash() {
   const game = useCourtClash()
   const { state, animating, beatMs } = game
@@ -129,6 +142,8 @@ export default function CourtClash() {
 
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [pending, setPending] = useState<Pending>(null)
+  const [plan, setPlan] = useState<PlanDraft | null>(null)
+  const [controlMode, setControlMode] = useState<ControlMode>('auto')
   const [radial, setRadial] = useState<{ at: Vec; items: RadialItem[]; note?: string } | null>(null)
   const [flash, setFlash] = useState<{ text: string; tone: Risk | 'neutral' } | null>(null)
 
@@ -162,11 +177,14 @@ export default function CourtClash() {
   const ballHandler = byId(state.ballHandlerId)
   const selected = byId(selectedId)
 
-  // Clear selection/targeting whenever the possession or beat advances.
+  // Clear selection/targeting whenever the possession or beat advances. An open
+  // plan draft is anchored to last step's positions, so drop it too — re-author
+  // against the new floor rather than committing a stale path.
   useEffect(() => {
     setSelectedId(null)
     setPending(null)
     setRadial(null)
+    setPlan(null)
   }, [state.possession, state.step, state.phase])
 
   // First-run coach: advance from "find the ball handler" once they've actually
@@ -304,16 +322,61 @@ export default function CourtClash() {
   }
 
   // --- Interaction ---------------------------------------------------------
+  // Any hands-on edit pauses an in-progress auto-run (Q48 drag-to-edit interrupt):
+  // you took the wheel, so the floor stops fast-forwarding until you advance again.
+  const interrupt = useCallback(() => {
+    if (game.autoRunning) game.stopAutoRun()
+  }, [game])
+
   const issue = (playerId: string, order: Order) => {
+    interrupt()
     game.setOrder(playerId, order)
     setSelectedId(null)
     setPending(null)
     setRadial(null)
   }
 
+  // --- Plan authoring (Q46) ------------------------------------------------
+  // The horizon a chain can hold right now: the shot-clock cap (Q45, the engine
+  // clamps `queue` to MAX_QUEUE) AND what's left on the live clock — a plan can't
+  // outlast the possession. legs = order + queue, so +1 over the queue cap.
+  const planCap = Math.min(MAX_QUEUE + 1, Math.max(1, state.shotClock))
+  const startPlan = (playerId: string) => {
+    interrupt()
+    setPlan({ playerId, legs: [], mode: 'jog' })
+    setSelectedId(playerId)
+    setPending(null)
+    setRadial(null)
+  }
+  const appendLeg = (o: Order) =>
+    setPlan((pl) => (pl && pl.legs.length < planCap ? { ...pl, legs: [...pl.legs, o] } : pl))
+  const commitPlan = () => {
+    if (!plan || plan.legs.length === 0) return
+    interrupt()
+    const [first, ...rest] = plan.legs
+    // One atomic commit of the WHOLE intended (order, queue) — rest=[] clears any
+    // stale chain (the P1 contract: no granular queue edit; re-commit the whole).
+    game.setOrder(plan.playerId, first, rest)
+    setPlan(null)
+    setSelectedId(null)
+  }
+  const cancelPlan = () => {
+    setPlan(null)
+    setSelectedId(null)
+  }
+
   const onPlayerTap = (id: string) => {
     const p = byId(id)
     if (!p) return
+    // While authoring a plan, tapping a teammate inserts a pass point and tapping a
+    // defender inserts a screen on that man — the "tap along the path to annotate
+    // non-move actions" half of hybrid authoring (Q46).
+    if (plan) {
+      if (id === plan.playerId) return
+      if (p.side === YOU) appendLeg({ kind: 'pass', toId: id })
+      else appendLeg({ kind: 'screen', to: { ...p.pos }, markId: id })
+      return
+    }
     if (pending) {
       if (pending.need === 'teammate' && targetable.has(id)) issue(pending.playerId, pending.make(id))
       else if (pending.need === 'enemy' && targetable.has(id)) issue(pending.playerId, pending.make(id))
@@ -332,6 +395,13 @@ export default function CourtClash() {
   }
 
   const onCourtTap = (pt: Vec) => {
+    // Laying the movement path: each tap drops the next waypoint (NOT clamped to one
+    // step — a planned chain spans the possession; the player moves toward each
+    // target then holds, Q12). jog/sprint comes from the draft's current stance.
+    if (plan) {
+      appendLeg({ kind: 'move', to: pt, mode: plan.mode })
+      return
+    }
     if (pending?.need === 'point') {
       const dest = pending.clampReach ? reachClamp(pending.playerId, pt) : pt
       issue(pending.playerId, pending.make(dest))
@@ -514,16 +584,61 @@ export default function CourtClash() {
         })
       }
     }
+    // Hybrid authoring entry (Q46): chain a multi-step plan for this player —
+    // available to both sides (a planned cut/relocation chain, or a defensive
+    // rotation path), committed atomically as (order, queue).
+    list.push({ label: '📋 Plan chain', sub: 'multi-step', run: () => startPlan(id) })
     return list
   }, [selected, onOffense, state.ballHandlerId, game])
 
-  const hint = pending
-    ? pending.hint
-    : selected
-      ? `${selected.name} (${selected.role}) — pick an action.`
-      : onOffense
-        ? 'Your ball. Drag the handler onto the hoop to shoot, or onto a spot/teammate to move/pass — then ▶ Next Step.'
-        : "Defense. Drag one of your players onto the CPU's ball handler to guard, double, or steal — then ▶ Next Step."
+  const hint = plan
+    ? `📋 Planning ${byId(plan.playerId)?.name ?? ''} — tap the floor to lay waypoints, a teammate to pass, a defender to screen. Commit when ready.`
+    : pending
+      ? pending.hint
+      : selected
+        ? `${selected.name} (${selected.role}) — pick an action.`
+        : onOffense
+          ? 'Your ball. Drag the handler onto the hoop to shoot, or onto a spot/teammate to move/pass — then ▶ Next Step.'
+          : "Defense. Drag one of your players onto the CPU's ball handler to guard, double, or steal — then ▶ Next Step."
+
+  // --- Transport / control modes (Q48) -------------------------------------
+  const autoRunning = game.autoRunning
+  const stepNow = () => {
+    interrupt()
+    handleNextStep()
+  }
+  const toggleAuto = () => (autoRunning ? game.stopAutoRun() : game.startAutoRun())
+  const switchMode = (m: ControlMode) => {
+    if (m === controlMode) return
+    game.stopAutoRun()
+    setControlMode(m)
+  }
+  // The bottom-right FAB mirrors the mode's main advance: Stop while running, else
+  // start the auto-run (auto mode) or take one step (manual).
+  const onFab = () => {
+    if (autoRunning) return game.stopAutoRun()
+    if (controlMode === 'auto') game.startAutoRun()
+    else stepNow()
+  }
+
+  // A draft leg's glyph for the chain-preview chips.
+  const legIcon = (o: Order): string => {
+    switch (o.kind) {
+      case 'pass':
+        return '🤝'
+      case 'screen':
+        return '🧱'
+      case 'idle':
+        return '⏸'
+      case 'cut':
+      case 'drive':
+        return '⚡'
+      case 'move':
+        return o.mode === 'sprint' ? '⚡' : '👟'
+      default:
+        return '•'
+    }
+  }
 
   return (
     <div className="cc">
@@ -594,16 +709,65 @@ export default function CourtClash() {
         gather={state.gather}
         radial={radial}
         handlerCue={onOffense && coachStep >= 0 && !selectedId}
+        draft={plan}
         onPlayerTap={onPlayerTap}
         onCourtTap={onCourtTap}
         onDragRelease={onDragRelease}
         onRadialCancel={onRadialCancel}
+        onInterrupt={interrupt}
       />
 
       {selected && <AttrPanel player={selected} />}
 
       <div className="cc__bar">
-        {pending ? (
+        {plan ? (
+          // --- Plan-authoring toolbar (Q46) — assemble & commit the full chain ---
+          <div className="cc__plan">
+            <div className="cc__plan-modes" role="group" aria-label="Waypoint speed">
+              {(['jog', 'sprint'] as MoveMode[]).map((m) => (
+                <button
+                  key={m}
+                  type="button"
+                  className={`cc-seg${plan.mode === m ? ' cc-seg--on' : ''}`}
+                  onClick={() => setPlan((pl) => (pl ? { ...pl, mode: m } : pl))}
+                >
+                  {m === 'jog' ? '👟 Jog' : '⚡ Sprint'}
+                </button>
+              ))}
+            </div>
+            <div className="cc__plan-chain" aria-label={`${plan.legs.length} steps planned`}>
+              {plan.legs.length === 0 ? (
+                <span className="cc__plan-empty">Tap the floor to lay the first waypoint…</span>
+              ) : (
+                plan.legs.map((o, i) => (
+                  <span key={i} className="cc__plan-chip" title={o.kind}>
+                    <span className="cc__plan-chip-n">{i + 1}</span>
+                    {legIcon(o)}
+                  </span>
+                ))
+              )}
+              <span className="cc__plan-cap">
+                {plan.legs.length}/{planCap}
+              </span>
+            </div>
+            <div className="cc__plan-acts">
+              <button
+                type="button"
+                className="cc-btn"
+                onClick={() => setPlan((pl) => (pl ? { ...pl, legs: pl.legs.slice(0, -1) } : pl))}
+                disabled={plan.legs.length === 0}
+              >
+                ↶ Undo
+              </button>
+              <button type="button" className="cc-btn cc-btn--primary" onClick={commitPlan} disabled={plan.legs.length === 0}>
+                ✓ Commit ({plan.legs.length})
+              </button>
+              <button type="button" className="cc-btn" onClick={cancelPlan}>
+                ✕ Cancel
+              </button>
+            </div>
+          </div>
+        ) : pending ? (
           <button type="button" className="cc-btn" onClick={() => setPending(null)}>
             ✕ Cancel
           </button>
@@ -627,14 +791,55 @@ export default function CourtClash() {
           <span className="cc__bar-tip">Tap a player to give orders or scout their attributes.</span>
         )}
         <div className="cc__transport">
-          <button
-            type="button"
-            className="cc-btn cc-btn--primary cc__run"
-            onClick={handleNextStep}
-            disabled={stepDisabled}
-          >
-            ▶ Next Step
-          </button>
+          {/* Control-mode toggle (Q48): auto-advance (sticky Run) vs manual (step +
+              press-hold fast-forward). */}
+          <div className="cc__modeseg" role="group" aria-label="Control mode">
+            <button type="button" className={`cc-seg${controlMode === 'auto' ? ' cc-seg--on' : ''}`} onClick={() => switchMode('auto')}>
+              Auto
+            </button>
+            <button type="button" className={`cc-seg${controlMode === 'manual' ? ' cc-seg--on' : ''}`} onClick={() => switchMode('manual')}>
+              Manual
+            </button>
+          </div>
+          <label className="cc__halt" title="Also pause the auto-run on scores, turnovers & possession changes">
+            <input
+              type="checkbox"
+              checked={state.haltOnSalient.player}
+              onChange={(e) => game.setHaltPolicy(YOU, e.target.checked)}
+            />
+            <span>⏸ big plays</span>
+          </label>
+          {controlMode === 'auto' ? (
+            <button
+              type="button"
+              className={`cc-btn cc-btn--primary cc__run${autoRunning ? ' cc__run--stop' : ''}`}
+              onClick={toggleAuto}
+              disabled={state.phase !== 'play'}
+            >
+              {autoRunning ? '⏹ Stop' : '▶ Auto-run'}
+            </button>
+          ) : (
+            <>
+              <button
+                type="button"
+                className="cc-btn cc__ff"
+                onPointerDown={(e) => {
+                  e.preventDefault()
+                  game.startAutoRun()
+                }}
+                onPointerUp={game.stopAutoRun}
+                onPointerLeave={game.stopAutoRun}
+                onPointerCancel={game.stopAutoRun}
+                disabled={state.phase !== 'play'}
+                aria-label="Hold to fast-forward"
+              >
+                ⏩ FF
+              </button>
+              <button type="button" className="cc-btn cc-btn--primary cc__run" onClick={stepNow} disabled={stepDisabled}>
+                ▶ Next Step
+              </button>
+            </>
+          )}
         </div>
       </div>
 
@@ -645,12 +850,12 @@ export default function CourtClash() {
       {state.phase === 'play' && (
         <button
           type="button"
-          className={`cc__fab${radial ? ' cc__fab--hidden' : ''}`}
-          onClick={handleNextStep}
-          disabled={stepDisabled}
-          aria-label="Next step"
+          className={`cc__fab${radial || plan ? ' cc__fab--hidden' : ''}${autoRunning ? ' cc__fab--stop' : ''}`}
+          onClick={onFab}
+          disabled={!autoRunning && stepDisabled}
+          aria-label={autoRunning ? 'Stop auto-run' : controlMode === 'auto' ? 'Auto-run' : 'Next step'}
         >
-          ▶
+          {autoRunning ? '⏹' : '▶'}
         </button>
       )}
 
