@@ -19,8 +19,8 @@ import {
   THREE_PT_RADIUS,
 } from './constants'
 import { clampToCourt, dist, distToRim, distToSegment, nearestOpponent, openness, opponentOf, shotType, stepToward, unitTo } from './geometry'
-import { reducer } from './engine'
-import type { Action, GameState, Order, Player, Side, Vec } from './types'
+import { clampQueue, reducer } from './engine'
+import type { Action, GameState, Order, OrderKind, Player, Side, Vec } from './types'
 
 const statN = (v: number): number => (v - 50) / 49
 
@@ -72,31 +72,67 @@ function shotEV(p: Player, players: Player[]): { ev: number; open: number } {
 }
 
 export interface AiPlan {
-  /** Each entry sets a player's active `order` and, optionally, its pending
-   *  plan-ahead chain `queue` (Q42). Omitted `queue` clears it (the AI re-plans
-   *  every step, so it re-emits the chain each time). */
+  /** Each entry sets a player's active `order` and its pending plan-ahead chain
+   *  `queue` (Q42). P2 emits a REAL multi-step committed chain for every player so
+   *  the side stays "in plan" across the whole fast-forward window; an omitted
+   *  `queue` is treated as CLEAR by the engine, so the planner ALWAYS re-emits the
+   *  complete (order, queue) on every re-plan — never a bare order for a player it
+   *  intends to keep chained (the P1 footgun, engine.ts:1068). */
   orders: { playerId: string; order: Order; queue?: Order[] }[]
   /** If set (and the AI is on offense), the CPU pulls the trigger this beat. */
   shoot?: string
 }
 
-/** STUB plan-ahead chain (P1 — Q42/Q46). The real multi-step COMMITTED planner is
- *  P2; for now the AI expresses its single chosen intent as a shallow 1–3-deep
- *  queue so the auto-run loop has a committed chain to fast-forward (a player with
- *  a non-empty queue isn't "out of plan", Q43). A committed line (drive / cut /
- *  sprint-move) repeats itself — re-committing the same target keeps the accel ramp
- *  alive (Q12); reactive orders hold (empty chain). Replaced wholesale by P2. */
-const STUB_QUEUE_DEPTH = 2
-function stubChain(order: Order): Order[] {
+/** Committed-plan horizon: how many links each player's chain publishes ahead. A
+ *  few steps of committed line is enough to fast-forward through the meat of a
+ *  possession (a drive, a kick, a re-space) while still re-deciding at the salient
+ *  beats; capped to the remaining shot clock (Q45) so a chain can't outlast the
+ *  possession (and the engine clamps every write to MAX_QUEUE besides). */
+const PLAN_HORIZON = 8
+const planDepth = (s: GameState): number => Math.max(1, Math.min(PLAN_HORIZON, s.shotClock - 1))
+
+/** Orders that reach a terminal "holding" state (engine.orderDone) — a player on
+ *  one of these with an EMPTY queue is "out of plan" and halts the shared auto-run
+ *  (engine.ts:353). Reactive orders (guard/double/steal) and mid-resolution
+ *  one-shots (screen/pass) never self-terminate, so they need no continuation. */
+const SELF_TERMINATING: ReadonlySet<OrderKind> = new Set<OrderKind>(['idle', 'move', 'cut', 'drive', 'help'])
+
+/** Re-commit the SAME order `depth` times — the committed-line continuation. For a
+ *  sprint/drive this keeps the accel ramp alive (re-targeting the same point is
+ *  "continue", not a redirect, Q12); for a hold (idle / arrived) it keeps the
+ *  player in plan without moving. The whole point: a player carrying this chain
+ *  isn't "out of plan", so it doesn't halt the fast-forward (Q43). */
+function repeatChain(order: Order, depth: number): Order[] {
+  return Array<Order>(Math.max(0, depth)).fill(order)
+}
+
+/** The committed chain for the BALL HANDLER's chosen intent. A drive/cut/move
+ *  re-commits its line (momentum); a pull-up holds (so a shot the take-gate vetoes
+ *  still leaves him in plan); a pass/screen resolves itself via the flight/contact
+ *  path (no halt meanwhile), so it carries no chain. */
+function handlerChain(order: Order, depth: number): Order[] {
   switch (order.kind) {
     case 'drive':
     case 'cut':
-      return Array<Order>(STUB_QUEUE_DEPTH).fill(order)
     case 'move':
-      return order.mode === 'sprint' ? Array<Order>(STUB_QUEUE_DEPTH).fill(order) : []
+    case 'idle':
+      return repeatChain(order, depth)
     default:
-      return []
+      return [] // pass / screen — resolves via ball-in-flight / contact, no halt
   }
+}
+
+/** Attach a continuation chain to a set of single orders so none of them leaves
+ *  its player "out of plan": a self-terminating order (idle/move/cut/drive/help)
+ *  gets a `depth`-deep hold/continue chain (re-committing the same line), while a
+ *  reactive order (guard/double/steal/screen) — which never self-terminates — gets
+ *  none. Used to keep the WHOLE defense in plan across the fast-forward window. */
+function withChains(entries: { playerId: string; order: Order }[], depth: number): { playerId: string; order: Order; queue: Order[] }[] {
+  return entries.map((e) => ({
+    playerId: e.playerId,
+    order: e.order,
+    queue: SELF_TERMINATING.has(e.order.kind) ? repeatChain(e.order, depth) : [],
+  }))
 }
 
 /** Canonical drive-and-kick spacing (team attacking the rim at small Y). Four
@@ -121,12 +157,18 @@ const DUNKER_SPOT: Vec = { x: 64, y: 17 }
  *  what lets active defense matter. Deterministic (stable order, nearest-spot
  *  greedy) so the reducer stays pure and replays exact. A player already on its
  *  spot idles to catch its breath rather than jittering in place. */
-function spacingOrders(handler: Player, players: Player[], ai: Player[]): { playerId: string; order: Order }[] {
+function spacingPlan(handler: Player, players: Player[], ai: Player[], depth: number): { playerId: string; order: Order; queue: Order[] }[] {
   const offBall = ai.filter((p) => p.id !== handler.id)
   const big = offBall.reduce((a, b) => (a.attr.shooting <= b.attr.shooting ? a : b))
   const perim = offBall.filter((p) => p.id !== big.id)
-  const orders: { playerId: string; order: Order }[] = []
+  const out: { playerId: string; order: Order; queue: Order[] }[] = []
   const used = new Set<number>()
+  // A jog relocation to a spacing station (off-ball moves are reactive jogs — no
+  // committed momentum, re-aiming each step is free, Q13). `arrived` holds (idle).
+  const reloc = (spotIdx: number, from: Vec): Order => {
+    const spot = clampToCourt(SPACE_SPOTS[spotIdx])
+    return dist(from, spot) < 2.5 ? { kind: 'idle' } : { kind: 'move', to: spot, mode: 'jog' }
+  }
   for (const p of perim) {
     const def = nearestOpponent(players, p)
     const covered = def ? dist(def.pos, p.pos) < 8 : false
@@ -148,15 +190,33 @@ function spacingOrders(handler: Player, players: Player[], ai: Player[]): { play
       }
     }
     used.add(bi)
-    const spot = clampToCourt(SPACE_SPOTS[bi])
-    const arrived = dist(p.pos, spot) < 2.5
-    // Off-ball relocations are reactive jogs (no committed momentum) — re-aiming
-    // each step is free, which is the point of spacing to open ground (Q13).
-    orders.push({ playerId: p.id, order: arrived ? { kind: 'idle' } : { kind: 'move', to: spot, mode: 'jog' } })
+    // The COMMITTED off-ball continuation (P2): arrive at the assigned station, then
+    // keep the floor alive — re-space through the next stations in turn (a relocate →
+    // re-space chain) instead of arriving once and idling. A live continuation is
+    // what keeps the off-ball man "in plan" across the whole fast-forward window (an
+    // arrive-and-idle would go out of plan the step he sets his feet and halt the
+    // shared run). The AI re-plans every step so this tour re-aims to the current
+    // best station each beat; a committed (human) plan runs it out literally.
+    const queue: Order[] = []
+    for (let k = 1; k <= depth; k++) queue.push(reloc((bi + k) % SPACE_SPOTS.length, SPACE_SPOTS[bi]))
+    out.push({ playerId: p.id, order: reloc(bi, p.pos), queue })
   }
+  // The big ducks to the dunker spot, then flashes high and re-ducks — a dump-off /
+  // offensive-glass body that keeps moving (so he too stays in plan, not a lone idle).
   const dunk = clampToCourt(DUNKER_SPOT)
-  orders.push({ playerId: big.id, order: dist(big.pos, dunk) < 2.5 ? { kind: 'idle' } : { kind: 'move', to: dunk, mode: 'jog' } })
-  return orders
+  const flash = clampToCourt(SPACE_SPOTS[4]) // top of the key
+  const bigTour: Vec[] = [flash, dunk] // oscillate high ↔ dunker (always far apart → a real relocation)
+  const bigQueue: Order[] = []
+  for (let k = 0; k < depth; k++) bigQueue.push({ kind: 'move', to: bigTour[k % 2], mode: 'jog' })
+  out.push({ playerId: big.id, order: dist(big.pos, dunk) < 2.5 ? { kind: 'idle' } : { kind: 'move', to: dunk, mode: 'jog' }, queue: bigQueue })
+  return out
+}
+
+/** The single-order view of the spacing plan (queues stripped) — used by the
+ *  no-halt branches (gather windup / ball in flight / buzzer) where a chain buys
+ *  nothing because the engine never halts mid-action anyway. */
+function spacingOrders(handler: Player, players: Player[], ai: Player[]): { playerId: string; order: Order }[] {
+  return spacingPlan(handler, players, ai, 0).map((e) => ({ playerId: e.playerId, order: e.order }))
 }
 
 // ===========================================================================
@@ -268,12 +328,23 @@ function ballEV(s: GameState, side: Side): number {
  *  with a derived RNG, the opponent continuing its revealed orders. Value =
  *  the best look the ball reached over the window, minus a turnover penalty if
  *  the possession was lost without a shot going up. Pure + deterministic. */
-function rolloutScore(state: GameState, side: Side, orders: { playerId: string; order: Order }[], shoot?: string): number {
+function rolloutScore(state: GameState, side: Side, orders: { playerId: string; order: Order; queue?: Order[] }[], shoot?: string): number {
   let cur = cloneState(state)
   cur.rngState = deriveSeed(state.rngState)
   for (const o of orders) {
     const p = byId(cur.players, o.playerId)
-    if (p) p.order = o.order
+    if (p) {
+      p.order = o.order
+      // Carry the HANDLER's committed line (the chosen intent — a repeated drive/cut
+      // that keeps the momentum ramp alive) into the hypothetical so the rollout
+      // simulates the actual plan; the re-entrant persistPlan re-emits it each step
+      // (footgun fix). Off-ball men HOLD their optimal spacing spot in the sim rather
+      // than running their re-space tour (a top-level halt-avoidance device) — a
+      // touring shooter is a worse, less accurate kick valve, so simulating the tour
+      // would wrongly suppress the drive-and-kick read. Static spacing here mirrors
+      // the pre-chain rollout, keeping shot selection (and the balance line) intact.
+      p.queue = p.id === cur.ballHandlerId ? clampQueue(o.queue ?? []) : []
+    }
   }
   const startPoss = cur.possession
   let peak = ballEV(cur, side)
@@ -316,11 +387,15 @@ function rolloutScore(state: GameState, side: Side, orders: { playerId: string; 
  *  window. No nested rollout (that's the recursion the guard exists to stop). */
 function persistPlan(s: GameState, side: Side): AiPlan {
   const mine = s.players.filter((p) => p.side === side)
-  // STUB: the rollout does NOT carry plan-ahead chains (queue omitted → cleared in
-  // the hypothetical). The real multi-step committed planner that rolls out chains
-  // is P2; keeping the rollout chain-free here means the P1 stub queue is inert in
-  // the AI's actual decisions — existing self-play behavior is unchanged.
-  const orders = mine.map((p) => ({ playerId: p.id, order: p.order }))
+  // Re-emit each player's FULL committed chain (order + queue), NOT a bare order —
+  // an omitted queue is treated as CLEAR (engine.ts:1068), which would drop the
+  // chain and collapse the committed line after one step (the P1 footgun). Carrying
+  // (order, queue) forward is what lets the rollout play the handler's committed line
+  // out — a repeated drive keeps building momentum to the rim instead of stopping the
+  // step it first arrives. (Off-ball men carry no queue inside a rollout — rolloutScore
+  // holds them on their spacing spot — so they just persist it.) A SET handler can
+  // still pull the trigger so a possession resolves into points within the window.
+  const orders = mine.map((p) => ({ playerId: p.id, order: p.order, queue: p.queue.slice() }))
   let shoot: string | undefined
   if (s.offense === side && !s.ball && !s.gather) {
     const h = byId(s.players, s.ballHandlerId)
@@ -397,13 +472,17 @@ function planOffense(state: GameState, side: Side): AiPlan {
     return { orders: [...spacingOrders(handler, players, ai), { playerId: handler.id, order: { kind: 'idle' } }], shoot: handler.id }
   }
 
-  const offBall = spacingOrders(handler, players, ai)
-  /** Assemble a full team plan: the off-ball spacing, the handler's chosen order,
-   *  and an optional override of one off-ball man (a screener). */
-  const assemble = (handlerOrder: Order, override?: { playerId: string; order: Order }): { playerId: string; order: Order }[] => {
+  const depth = planDepth(state)
+  const offBall = spacingPlan(handler, players, ai, depth)
+  /** Assemble a full team plan, every player carrying its COMMITTED CHAIN: the
+   *  off-ball re-spacing tours, the handler's chosen intent + its continuation, and
+   *  an optional override of one off-ball man (a screener). Re-emitting the full
+   *  (order, queue) for all five is what keeps the whole side in plan across the
+   *  fast-forward window — an omitted queue would clear the chain (the P1 footgun). */
+  const assemble = (handlerOrder: Order, override?: { playerId: string; order: Order }): { playerId: string; order: Order; queue: Order[] }[] => {
     const base = override ? offBall.filter((o) => o.playerId !== override.playerId) : offBall
-    const all = [...base, { playerId: handler.id, order: handlerOrder }]
-    if (override) all.push(override)
+    const all = [...base, { playerId: handler.id, order: handlerOrder, queue: handlerChain(handlerOrder, depth) }]
+    if (override) all.push({ playerId: override.playerId, order: override.order, queue: SELF_TERMINATING.has(override.order.kind) ? repeatChain(override.order, depth) : [] })
     return all
   }
 
@@ -423,7 +502,7 @@ function planOffense(state: GameState, side: Side): AiPlan {
   )
 
   interface Cand {
-    orders: { playerId: string; order: Order }[]
+    orders: { playerId: string; order: Order; queue: Order[] }[]
     shoot?: string
     bonus: number
     label: string
@@ -489,14 +568,11 @@ function planOffense(state: GameState, side: Side): AiPlan {
       best = c
     }
   }
-  // STUB plan-ahead (Q42/Q46): publish the chosen handler intent as a shallow
-  // committed chain so the auto-run loop has something to fast-forward. The handler
-  // is the only player given a chain here; off-ball spacing re-plans each step (P2
-  // emits real multi-player chains).
-  const orders = best.orders.map((o) =>
-    o.playerId === handler.id ? { ...o, queue: stubChain(o.order) } : o,
-  )
-  return { orders, shoot: best.shoot }
+  // The chosen candidate already carries a full committed chain for every player
+  // (handler continuation + off-ball re-spacing tours), so the whole side stays in
+  // plan and the auto-run fast-forwards through the possession instead of halting
+  // each step (Q42/Q46). Emitted verbatim — re-decided next step from revealed state.
+  return { orders: best.orders, shoot: best.shoot }
 }
 
 // ---- Defense: positional man + help (reads positions only — Q16-legal) ------
@@ -639,7 +715,14 @@ function planDefense(state: GameState, side: Side): AiPlan {
       if (gIdx >= 0) orders[gIdx] = { playerId: ai[gIdx].id, order: { kind: 'steal', markId: handler.id } }
     }
   }
-  return { orders }
+  // Keep the whole defense IN PLAN across the fast-forward window (Q42/Q43): a
+  // guarding/doubling/stealing defender already never self-terminates, but a planted
+  // rim protector (idle) or an arrived cutoff (help) would go "out of plan" the step
+  // he sets his feet and halt the shared run. Attach a hold/continue chain to those
+  // self-terminating orders — re-emitted in full every re-plan so the chain can't
+  // drop (the P1 footgun). Defense reacts each step regardless; the chain is what
+  // lets a committed possession roll forward without stopping on a set defender.
+  return { orders: withChains(orders, planDepth(state)) }
 }
 
 /**
