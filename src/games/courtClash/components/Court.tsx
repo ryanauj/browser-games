@@ -3,7 +3,7 @@ import { BASKET, COURT_H, COURT_W, LEAD_CATCH_RADIUS, RIM_RADIUS, SCREEN_RADIUS,
 import { GASSED_THRESHOLD } from '../constants'
 import { signatureAttr } from '../attributes'
 import { contestedStep, dist, leadCatch, reachOf, sprintTopOf, stepToward } from '../geometry'
-import type { Ball, Player, ShotGather, Side, Vec } from '../types'
+import type { Ball, MoveMode, Order, Player, ShotGather, Side, Vec } from '../types'
 
 /** One choice in the post-drag radial menu. The first item is the primary. */
 export interface RadialItem {
@@ -63,11 +63,17 @@ export interface CourtProps {
   radial: { at: Vec; items: RadialItem[]; note?: string } | null
   /** Pulse YOUR ball handler to answer "who has the ball" during onboarding. */
   handlerCue?: boolean
+  /** The plan being AUTHORED right now (Q46), if any — its `legs` are drawn as a
+   *  live chain from the player's current spot so you can see the path as you lay
+   *  it. OWN player only (the UI only ever opens a draft for your side). */
+  draft: { playerId: string; legs: Order[]; mode: MoveMode } | null
   onPlayerTap: (id: string) => void
   onCourtTap: (pt: Vec) => void
   /** A drag finished on `at`; `targetId` is the player dropped onto, if any. */
   onDragRelease: (id: string, at: Vec, targetId: string | null) => void
   onRadialCancel: () => void
+  /** Grabbing one of your players to edit pauses an in-progress auto-run (Q48). */
+  onInterrupt?: () => void
 }
 
 const DRAG_THRESHOLD = 5 // logic units — high enough that a jostle on a moving train doesn't open a stray radial
@@ -75,6 +81,55 @@ const DROP_HIT = 7 // logic-unit radius for "dropped onto this player"
 /** Release within this radius of the rim = a shot (drag-to-hoop). Shared with
  *  the radial logic in index.tsx so the ghost line and the menu agree. */
 export const HOOP_HIT = 10
+
+/** The floor point an order RELOCATES the player to, or null for an order that
+ *  holds position (pass / idle / reactive). Mirrors the single-order route logic so
+ *  a queue chain and its head route agree. */
+function movePoint(o: Order, players: Player[]): Vec | null {
+  if (o.kind === 'move' || o.kind === 'cut' || o.kind === 'drive' || o.kind === 'help') return o.to
+  if (o.kind === 'screen') return (o.markId ? players.find((t) => t.id === o.markId)?.pos : null) ?? o.to
+  return null
+}
+
+/** A non-move order's marker glyph along the chain (null = a plain movement
+ *  waypoint, drawn as a numbered node only). */
+function linkGlyph(o: Order): string | null {
+  if (o.kind === 'screen') return '🧱'
+  if (o.kind === 'pass') return '🤝'
+  if (o.kind === 'idle') return '⏸'
+  return null
+}
+
+interface ChainLink {
+  pt: Vec
+  order: Order
+  seq: number
+}
+interface PlanChain {
+  id: string
+  segs: { from: Vec; to: Vec }[]
+  links: ChainLink[]
+}
+
+/** Walk an order list from `start`, emitting a segment + node for each relocating
+ *  order and an in-place marker for each hold/pass — the planned path + action
+ *  points that the queue viz (Q15) and the live draft (Q46) both render. */
+function buildChain(id: string, start: Vec, orders: Order[], players: Player[]): PlanChain {
+  let cursor = start
+  const segs: { from: Vec; to: Vec }[] = []
+  const links: ChainLink[] = []
+  orders.forEach((o, i) => {
+    const mp = movePoint(o, players)
+    if (mp) {
+      segs.push({ from: cursor, to: mp })
+      links.push({ pt: { ...mp }, order: o, seq: i + 1 })
+      cursor = mp
+    } else {
+      links.push({ pt: { ...cursor }, order: o, seq: i + 1 })
+    }
+  })
+  return { id, segs, links }
+}
 
 export function Court(props: CourtProps) {
   const {
@@ -93,10 +148,12 @@ export function Court(props: CourtProps) {
     gather,
     radial,
     handlerCue,
+    draft,
     onPlayerTap,
     onCourtTap,
     onDragRelease,
     onRadialCancel,
+    onInterrupt,
   } = props
   const ref = useRef<HTMLDivElement>(null)
   const [drag, setDrag] = useState<{ id: string; from: Vec; to: Vec; moved: boolean } | null>(null)
@@ -116,6 +173,7 @@ export function Court(props: CourtProps) {
       onPlayerTap(p.id) // tapping an opponent = a target tap
       return
     }
+    onInterrupt?.() // hands on the wheel — pause any running auto-advance (Q48)
     ;(e.target as Element).setPointerCapture?.(e.pointerId)
     setDrag({ id: p.id, from: { ...p.pos }, to: { ...p.pos }, moved: false })
   }
@@ -225,6 +283,21 @@ export function Court(props: CourtProps) {
     })
     .filter(Boolean) as { id: string; from: Vec; to: Vec; kind: string; dashed: boolean }[]
 
+  // OWN-SIDE QUEUE VIZ (Q15). Render the human's committed CHAIN — the active
+  // order already draws its head route (p.pos → order.to); this continues it through
+  // the pending `queue`, front-to-back, with a numbered node per waypoint and a glyph
+  // at each non-move action point. OWN players only — the opponent's queue is never
+  // shown (you infer it from motion). The chain starts where the active order leaves
+  // the player (its endpoint), so the head route and the chain meet seamlessly.
+  const planChains = players
+    .filter((p) => p.side === yourSide && p.queue.length > 0)
+    .map((p) => buildChain(p.id, movePoint(p.order, players) ?? p.pos, p.queue, players))
+
+  // The live AUTHORING draft (Q46) — drawn from the player's CURRENT spot through
+  // every laid leg (nothing committed yet), in a brighter "drafting" style.
+  const draftPlayer = draft ? players.find((p) => p.id === draft.playerId) : null
+  const draftChain = draft && draftPlayer ? buildChain(draftPlayer.id, draftPlayer.pos, draft.legs, players) : null
+
   // MOTION TELEGRAPH (Q15). The ONLY committed-intent cue shown for BOTH sides:
   // a player's tracked sprint speed/heading (`sprintSpeed`/`sprintDir`). You read
   // the opponent purely from this observable motion — no opponent order lines.
@@ -327,6 +400,28 @@ export function Court(props: CourtProps) {
             strokeDasharray={r.dashed ? '3 3' : undefined}
           />
         ))}
+        {/* Committed queue chains (Q15, OWN only) + the live draft (Q46). Lines +
+            nodes here; the numbered/glyph badges are HTML below (emoji legibility). */}
+        {planChains.map((c) => (
+          <g key={`plan-${c.id}`}>
+            {c.segs.map((s, i) => (
+              <line key={i} x1={s.from.x} y1={s.from.y} x2={s.to.x} y2={s.to.y} className="cc-plan-seg" />
+            ))}
+            {c.links.map((l) => (
+              <circle key={l.seq} cx={l.pt.x} cy={l.pt.y} r={1.7} className="cc-plan-node" />
+            ))}
+          </g>
+        ))}
+        {draftChain && (
+          <g>
+            {draftChain.segs.map((s, i) => (
+              <line key={i} x1={s.from.x} y1={s.from.y} x2={s.to.x} y2={s.to.y} className="cc-draft-seg" />
+            ))}
+            {draftChain.links.map((l) => (
+              <circle key={l.seq} cx={l.pt.x} cy={l.pt.y} r={2.1} className="cc-draft-node" />
+            ))}
+          </g>
+        )}
         {drag &&
           drag.moved &&
           (() => {
@@ -412,6 +507,27 @@ export function Court(props: CourtProps) {
           />
         )}
       </svg>
+
+      {/* Plan waypoint badges (Q15 committed + Q46 draft) — numbered chips with an
+          action glyph, as HTML so emoji render crisply. Own-side only by
+          construction (planChains filters to yourSide; a draft is always yours). */}
+      {[...planChains.map((c) => ({ c, isDraft: false })), ...(draftChain ? [{ c: draftChain, isDraft: true }] : [])].map(
+        ({ c, isDraft }) =>
+          c.links.map((l) => {
+            const glyph = linkGlyph(l.order)
+            return (
+              <span
+                key={`${isDraft ? 'd' : 'p'}-${c.id}-${l.seq}`}
+                className={`cc-plan-mark${isDraft ? ' cc-plan-mark--draft' : ''}`}
+                style={{ left: pct(l.pt.x, COURT_W), top: pct(l.pt.y, COURT_H) }}
+                aria-hidden
+              >
+                <span className="cc-plan-mark__n">{l.seq}</span>
+                {glyph && <span className="cc-plan-mark__g">{glyph}</span>}
+              </span>
+            )
+          }),
+      )}
 
       {/* The ball in flight — each leg a keyframed hop (arc baked into a midpoint
           stop). Legs run back-to-back across the beat, weighted by distance. */}

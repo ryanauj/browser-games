@@ -1339,3 +1339,214 @@
   width: 100%;
   margin-top: 16px;
 }
+
+/* ====================================================================== */
+/* Plan-ahead UI (P3): queue viz (Q15) · hybrid authoring (Q46) · control */
+/* modes (Q48). Own-side only by construction.                            */
+/* ====================================================================== */
+
+/* --- Queue chain on the court (committed, Q15) ----------------------- */
+/* The planned path that continues past the active order's head route: a
+   dashed teal chain with a node per waypoint. OWN players only. */
+.cc-plan-seg {
+  stroke: var(--cc-you);
+  stroke-width: 1;
+  stroke-dasharray: 1.5 2.5;
+  stroke-linecap: round;
+  opacity: 0.65;
+  fill: none;
+}
+.cc-plan-node {
+  fill: var(--cc-you);
+  opacity: 0.7;
+}
+/* The live draft being authored (Q46) — brighter + solid so it reads as the
+   thing you're actively shaping, distinct from already-committed chains. */
+.cc-draft-seg {
+  stroke: var(--cc-orange);
+  stroke-width: 1.5;
+  stroke-dasharray: 3 2;
+  stroke-linecap: round;
+  opacity: 0.95;
+  fill: none;
+  animation: cc-dash 0.6s linear infinite;
+}
+.cc-draft-node {
+  fill: var(--cc-orange);
+}
+@keyframes cc-dash {
+  to {
+    stroke-dashoffset: -5;
+  }
+}
+
+/* Waypoint badges (HTML overlay so emoji glyphs render): a small numbered chip,
+   with the action glyph stacked above for non-move points (pass/screen). */
+.cc-plan-mark {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  display: grid;
+  place-items: center;
+  pointer-events: none;
+  z-index: 3;
+  line-height: 1;
+}
+.cc-plan-mark__n {
+  font-size: 0.5rem;
+  font-weight: 800;
+  color: #fff;
+  background: var(--cc-you);
+  border-radius: 50%;
+  width: 13px;
+  height: 13px;
+  display: grid;
+  place-items: center;
+  box-shadow: 0 0 0 1.5px rgba(0, 0, 0, 0.4);
+}
+.cc-plan-mark__g {
+  position: absolute;
+  bottom: 11px;
+  font-size: 0.72rem;
+  filter: drop-shadow(0 1px 1px rgba(0, 0, 0, 0.6));
+}
+.cc-plan-mark--draft .cc-plan-mark__n {
+  background: var(--cc-orange);
+  width: 15px;
+  height: 15px;
+  font-size: 0.56rem;
+}
+
+/* --- Plan-authoring toolbar (Q46) ------------------------------------ */
+.cc__plan {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  flex: 1;
+}
+.cc__plan-modes,
+.cc__plan-acts {
+  display: flex;
+  gap: 4px;
+}
+.cc__plan-chain {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+  flex: 1;
+  min-width: 120px;
+  padding: 4px 8px;
+  background: #0a1120;
+  border: 1px solid var(--cc-line);
+  border-radius: 8px;
+  min-height: 36px;
+}
+.cc__plan-empty {
+  font-size: 0.74rem;
+  color: var(--cc-dim);
+}
+.cc__plan-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  font-size: 0.86rem;
+  background: var(--cc-panel-2);
+  border: 1px solid var(--cc-line);
+  border-radius: 6px;
+  padding: 1px 5px 1px 3px;
+}
+.cc__plan-chip-n {
+  font-size: 0.56rem;
+  font-weight: 800;
+  color: #fff;
+  background: var(--cc-orange);
+  border-radius: 50%;
+  width: 13px;
+  height: 13px;
+  display: grid;
+  place-items: center;
+}
+.cc__plan-cap {
+  margin-left: auto;
+  font-size: 0.66rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--cc-dim);
+}
+
+/* --- Control modes (Q48): segmented toggles + halt opt-in + FF/stop --- */
+.cc__modeseg,
+.cc__plan-modes {
+  display: inline-flex;
+  border: 1px solid var(--cc-line);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.cc-seg {
+  background: var(--cc-panel-2);
+  color: var(--cc-dim);
+  border: none;
+  padding: 7px 10px;
+  font-size: 0.78rem;
+  font-weight: 700;
+  cursor: pointer;
+  touch-action: manipulation;
+  min-height: 40px;
+}
+.cc-seg + .cc-seg {
+  border-left: 1px solid var(--cc-line);
+}
+.cc-seg--on {
+  background: var(--cc-you);
+  color: #06101f;
+}
+.cc__plan-modes .cc-seg--on {
+  background: var(--cc-orange);
+  color: #1a1206;
+}
+.cc__halt {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.7rem;
+  color: var(--cc-dim);
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+}
+.cc__halt input {
+  accent-color: var(--cc-orange);
+  cursor: pointer;
+}
+.cc__run--stop {
+  background: var(--cc-bad);
+  border-color: var(--cc-bad);
+  color: #2a0808;
+}
+.cc__run--stop:hover:not(:disabled) {
+  background: #ff8585;
+}
+.cc__ff {
+  min-height: 48px;
+  font-weight: 800;
+  user-select: none;
+}
+.cc__ff:active:not(:disabled) {
+  background: var(--cc-orange);
+  border-color: var(--cc-orange);
+  color: #1a1206;
+}
+.cc__fab--stop {
+  background: var(--cc-bad);
+  color: #fff;
+}
+
+@media (max-width: 520px) {
+  .cc__transport {
+    flex-wrap: wrap;
+  }
+  .cc__halt {
+    order: 3;
+  }
+}
