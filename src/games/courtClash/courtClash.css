@@ -1346,30 +1346,44 @@
 /* ====================================================================== */
 
 /* --- Queue chain on the court (committed, Q15) ----------------------- */
-/* The planned path that continues past the active order's head route: a
-   dashed teal chain with a node per waypoint. OWN players only. */
+/* The planned path that continues past the active order's head route, with a node
+   per waypoint. OWN players only. The line STYLE carries the leg's intent so the
+   path reads itself: jog = thin/dim, sprint = thick/bright/animated (committed),
+   screen-approach = amber. The draft modifier brightens + animates everything so
+   the chain you're actively shaping stands apart from committed ones. */
 .cc-plan-seg {
-  stroke: var(--cc-you);
-  stroke-width: 1;
-  stroke-dasharray: 1.5 2.5;
-  stroke-linecap: round;
-  opacity: 0.65;
   fill: none;
+  stroke-linecap: round;
+}
+.cc-plan-seg--jog {
+  stroke: var(--cc-you);
+  stroke-width: 0.9;
+  stroke-dasharray: 1.5 2.5;
+  opacity: 0.55;
+}
+.cc-plan-seg--sprint {
+  stroke: var(--cc-you);
+  stroke-width: 1.9;
+  stroke-dasharray: 3 1.8;
+  opacity: 0.85;
+  animation: cc-dash 0.7s linear infinite;
+}
+.cc-plan-seg--screen {
+  stroke: var(--cc-fair);
+  stroke-width: 1.4;
+  stroke-dasharray: 2 2;
+  opacity: 0.7;
+}
+.cc-plan-seg--draft {
+  opacity: 1;
+  animation: cc-dash 0.55s linear infinite;
+}
+.cc-plan-seg--draft.cc-plan-seg--jog {
+  stroke-width: 1.3;
 }
 .cc-plan-node {
   fill: var(--cc-you);
   opacity: 0.7;
-}
-/* The live draft being authored (Q46) — brighter + solid so it reads as the
-   thing you're actively shaping, distinct from already-committed chains. */
-.cc-draft-seg {
-  stroke: var(--cc-orange);
-  stroke-width: 1.5;
-  stroke-dasharray: 3 2;
-  stroke-linecap: round;
-  opacity: 0.95;
-  fill: none;
-  animation: cc-dash 0.6s linear infinite;
 }
 .cc-draft-node {
   fill: var(--cc-orange);
@@ -1416,7 +1430,7 @@
   font-size: 0.56rem;
 }
 
-/* --- Plan-authoring toolbar (Q46) ------------------------------------ */
+/* --- Plan preview (bottom bar, Q46) — chain readout; controls float on court - */
 .cc__plan {
   display: flex;
   align-items: center;
@@ -1424,10 +1438,13 @@
   flex-wrap: wrap;
   flex: 1;
 }
-.cc__plan-modes,
-.cc__plan-acts {
-  display: flex;
-  gap: 4px;
+.cc__plan-hint {
+  font-size: 0.74rem;
+  color: var(--cc-dim);
+  flex-basis: 100%;
+}
+.cc__plan-chip--sprint .cc__plan-chip-n {
+  background: var(--cc-you);
 }
 .cc__plan-chain {
   display: flex;
@@ -1549,4 +1566,73 @@
   .cc__halt {
     order: 3;
   }
+}
+
+/* --- Floating plan controls (on-court, Q46/Q48) ---------------------- */
+/* A compact control cluster anchored at the player being authored, so the speed
+   toggle / screen tool / undo / commit stay under the thumb while you tap the
+   floor to lay the path. Sits just below the token (flips above near the
+   half-court edge). stopPropagation in the JSX keeps button taps off the court. */
+.cc-planmenu {
+  position: absolute;
+  transform: translate(-50%, 26px);
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  padding: 3px;
+  background: rgba(10, 17, 32, 0.95);
+  border: 1px solid var(--cc-orange);
+  border-radius: 10px;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.55);
+  z-index: 6;
+  touch-action: manipulation;
+}
+.cc-planmenu__seg {
+  display: inline-flex;
+  border: 1px solid var(--cc-line);
+  border-radius: 7px;
+  overflow: hidden;
+}
+.cc-planmenu__seg .cc-seg {
+  min-height: 36px;
+  min-width: 34px;
+  padding: 4px 7px;
+  font-size: 0.9rem;
+}
+.cc-planmenu__btn {
+  min-width: 36px;
+  min-height: 36px;
+  padding: 4px 7px;
+  display: inline-flex;
+  align-items: center;
+  gap: 1px;
+  background: var(--cc-panel-2);
+  color: var(--cc-text);
+  border: 1px solid var(--cc-line);
+  border-radius: 7px;
+  font-size: 0.95rem;
+  font-weight: 800;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+.cc-planmenu__btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.cc-planmenu__btn--armed {
+  background: var(--cc-fair);
+  border-color: var(--cc-fair);
+  color: #2a2206;
+}
+.cc-planmenu__btn--ok {
+  background: var(--cc-orange);
+  border-color: var(--cc-orange);
+  color: #1a1206;
+}
+.cc-planmenu__btn--x {
+  color: var(--cc-bad);
+}
+.cc-planmenu__n {
+  font-size: 0.62rem;
+  font-variant-numeric: tabular-nums;
 }
