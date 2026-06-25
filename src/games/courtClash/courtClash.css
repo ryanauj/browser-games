@@ -1587,6 +1587,23 @@
   z-index: 6;
   touch-action: manipulation;
 }
+.cc-planmenu__grip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 22px;
+  min-height: 36px;
+  margin-right: 1px;
+  color: var(--cc-dim);
+  font-size: 1rem;
+  line-height: 1;
+  cursor: move;
+  touch-action: none;
+  user-select: none;
+}
+.cc-planmenu__grip:active {
+  color: var(--cc-orange);
+}
 .cc-planmenu__seg {
   display: inline-flex;
   border: 1px solid var(--cc-line);

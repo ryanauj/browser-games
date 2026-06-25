@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { BASKET, COURT_H, COURT_W, LEAD_CATCH_RADIUS, RIM_RADIUS, SCREEN_RADIUS, THREE_PT_RADIUS, type Risk } from '../constants'
 import { GASSED_THRESHOLD } from '../constants'
 import { signatureAttr } from '../attributes'
@@ -186,6 +186,35 @@ export function Court(props: CourtProps) {
   const ref = useRef<HTMLDivElement>(null)
   const [drag, setDrag] = useState<{ id: string; from: Vec; to: Vec; moved: boolean } | null>(null)
   const pendingCourtTap = useRef<Vec | null>(null)
+
+  // Manual offset (logic units) for the floating plan menu — the user can drag it
+  // off the action by its grip. Reset whenever a plan closes so the next one opens
+  // anchored to its player again.
+  const [menuOffset, setMenuOffset] = useState<{ dx: number; dy: number }>({ dx: 0, dy: 0 })
+  const menuDrag = useRef<{ startX: number; startY: number; baseDx: number; baseDy: number } | null>(null)
+  useEffect(() => {
+    if (!planUI) setMenuOffset({ dx: 0, dy: 0 })
+  }, [!!planUI])
+
+  const startMenuDrag = (e: React.PointerEvent) => {
+    e.stopPropagation()
+    ;(e.target as Element).setPointerCapture?.(e.pointerId)
+    menuDrag.current = { startX: e.clientX, startY: e.clientY, baseDx: menuOffset.dx, baseDy: menuOffset.dy }
+  }
+  const moveMenuDrag = (e: React.PointerEvent) => {
+    if (!menuDrag.current || !ref.current) return
+    e.stopPropagation()
+    const rect = ref.current.getBoundingClientRect()
+    setMenuOffset({
+      dx: menuDrag.current.baseDx + ((e.clientX - menuDrag.current.startX) / rect.width) * COURT_W,
+      dy: menuDrag.current.baseDy + ((e.clientY - menuDrag.current.startY) / rect.height) * COURT_H,
+    })
+  }
+  const endMenuDrag = (e: React.PointerEvent) => {
+    if (!menuDrag.current) return
+    e.stopPropagation()
+    menuDrag.current = null
+  }
 
   const toLogic = (e: React.PointerEvent): Vec => {
     const rect = ref.current!.getBoundingClientRect()
@@ -725,18 +754,34 @@ export function Court(props: CourtProps) {
           button tap from also dropping a waypoint on the court surface. */}
       {planUI &&
         (() => {
-          // Keep the cluster on-court (the court clips overflow): bias the X anchor
-          // toward the near edge, and flip above the token in the bottom third.
-          const tx = planUI.pos.x < 24 ? '-12%' : planUI.pos.x > 76 ? '-88%' : '-50%'
-          const ty = planUI.pos.y > 66 ? 'calc(-100% - 26px)' : '26px'
+          // Anchor at the player, plus the user's manual drag offset (clamped so the
+          // cluster stays on the clipped court). Bias the X anchor toward the near
+          // edge and flip above the token in the bottom third.
+          const ax = Math.max(6, Math.min(94, planUI.pos.x + menuOffset.dx))
+          const ay = Math.max(4, Math.min(96, planUI.pos.y + menuOffset.dy))
+          const moved = menuOffset.dx !== 0 || menuOffset.dy !== 0
+          const tx = ax < 24 ? '-12%' : ax > 76 ? '-88%' : '-50%'
+          // Once dragged, sit ON the chosen point (no token-relative flip).
+          const ty = moved ? '-50%' : planUI.pos.y > 66 ? 'calc(-100% - 26px)' : '26px'
           return (
             <div
               className="cc-planmenu"
-              style={{ left: pct(planUI.pos.x, COURT_W), top: pct(planUI.pos.y, COURT_H), transform: `translate(${tx}, ${ty})` }}
+              style={{ left: pct(ax, COURT_W), top: pct(ay, COURT_H), transform: `translate(${tx}, ${ty})` }}
               onPointerDown={(e) => e.stopPropagation()}
               role="group"
               aria-label="Plan controls"
             >
+          <span
+            className="cc-planmenu__grip"
+            onPointerDown={startMenuDrag}
+            onPointerMove={moveMenuDrag}
+            onPointerUp={endMenuDrag}
+            onPointerCancel={endMenuDrag}
+            title="Drag to move these controls"
+            aria-hidden
+          >
+            ⠿
+          </span>
           <div className="cc-planmenu__seg">
             <button type="button" className={`cc-seg${planUI.mode === 'jog' ? ' cc-seg--on' : ''}`} onClick={planUI.onMode.bind(null, 'jog')}>
               👟
