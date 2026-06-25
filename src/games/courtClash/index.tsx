@@ -342,14 +342,12 @@ export default function CourtClash() {
   // clamps `queue` to MAX_QUEUE) AND what's left on the live clock — a plan can't
   // outlast the possession. legs = order + queue, so +1 over the queue cap.
   const planCap = Math.min(MAX_QUEUE + 1, Math.max(1, state.shotClock))
-  const startPlan = (playerId: string, first?: Order) => {
+  // Open the authoring floater for a player, seeded with `legs` (empty for a fresh
+  // plan, [firstLeg] from a drag, or [order, ...queue] to EDIT an existing plan).
+  const startPlan = (playerId: string, legs: Order[] = []) => {
     interrupt()
-    setPlan({
-      playerId,
-      legs: first ? [first] : [],
-      mode: first && first.kind === 'move' ? first.mode : 'jog',
-      armScreen: false,
-    })
+    const first = legs[0]
+    setPlan({ playerId, legs, mode: first && first.kind === 'move' ? first.mode : 'jog', armScreen: false })
     setSelectedId(playerId)
     setPending(null)
     setRadial(null)
@@ -396,6 +394,13 @@ export default function CourtClash() {
     if (pending) {
       if (pending.need === 'teammate' && targetable.has(id)) issue(pending.playerId, pending.make(id))
       else if (pending.need === 'enemy' && targetable.has(id)) issue(pending.playerId, pending.make(id))
+      return
+    }
+    // Tapping one of YOUR players who already has a queued plan re-opens the floater
+    // on that plan (loaded as order+queue) so you can edit and re-commit it — the P1
+    // contract has no granular queue edit, so editing = re-committing the whole chain.
+    if (p.side === YOU && p.queue.length > 0) {
+      startPlan(id, [p.order, ...p.queue])
       return
     }
     // Tap any player to inspect/order them. When sprites overlap, repeated taps
@@ -469,7 +474,9 @@ export default function CourtClash() {
     // guard·double·steal) — those keep the contextual radial below.
     if (!onHoop0 && !onEnemy0) {
       const first: Order = onTeammate0 && isHandler0 ? { kind: 'pass', toId: target0!.id } : { kind: 'move', to: at, mode: 'jog' }
-      startPlan(id, first)
+      // Already has a plan? Append the new leg to it rather than discarding it.
+      if (p.queue.length > 0) startPlan(id, [p.order, ...p.queue, first])
+      else startPlan(id, [first])
       return
     }
 
@@ -656,11 +663,22 @@ export default function CourtClash() {
 
   // --- Transport / control modes (Q48) -------------------------------------
   const autoRunning = game.autoRunning
+  // Auto-run only makes sense when there's a committed chain to fast-forward. On
+  // OFFENSE, gate it on at least one of your players having a queued plan — otherwise
+  // it just burns the possession single-stepping idle players. On defense it's still
+  // allowed (you may want to fast-forward through the AI's possession).
+  const yourHaveQueue = useMemo(() => yourPlayers.some((p) => p.queue.length > 0), [yourPlayers])
+  const canAutoRun = !onOffense || yourHaveQueue
+  // If the queues drain mid-run (or possession flips) while on offense, stop.
+  useEffect(() => {
+    if (autoRunning && !canAutoRun) game.stopAutoRun()
+  }, [autoRunning, canAutoRun, game])
+
   const stepNow = () => {
     interrupt()
     handleNextStep()
   }
-  const toggleAuto = () => (autoRunning ? game.stopAutoRun() : game.startAutoRun())
+  const toggleAuto = () => (autoRunning ? game.stopAutoRun() : canAutoRun && game.startAutoRun())
   const switchMode = (m: ControlMode) => {
     if (m === controlMode) return
     game.stopAutoRun()
@@ -670,8 +688,9 @@ export default function CourtClash() {
   // start the auto-run (auto mode) or take one step (manual).
   const onFab = () => {
     if (autoRunning) return game.stopAutoRun()
-    if (controlMode === 'auto') game.startAutoRun()
-    else stepNow()
+    if (controlMode === 'auto') {
+      if (canAutoRun) game.startAutoRun()
+    } else stepNow()
   }
 
   // A draft leg's glyph for the chain-preview chips.
@@ -766,18 +785,12 @@ export default function CourtClash() {
         planUI={
           plan
             ? {
-                pos: byId(plan.playerId)?.pos ?? BASKET,
                 mode: plan.mode,
                 count: plan.legs.length,
                 screenArmed: plan.armScreen,
-                isHandler: plan.playerId === state.ballHandlerId,
                 onMode: setPlanMode,
                 onScreen: armScreen,
                 onUndo: undoLeg,
-                onShoot: () => {
-                  cancelPlan()
-                  game.callShot(plan.playerId)
-                },
                 onCommit: commitPlan,
                 onCancel: cancelPlan,
               }
@@ -863,7 +876,8 @@ export default function CourtClash() {
               type="button"
               className={`cc-btn cc-btn--primary cc__run${autoRunning ? ' cc__run--stop' : ''}`}
               onClick={toggleAuto}
-              disabled={state.phase !== 'play'}
+              disabled={state.phase !== 'play' || (!autoRunning && !canAutoRun)}
+              title={!canAutoRun ? 'Queue a multi-step plan first (drag a player) to auto-run' : undefined}
             >
               {autoRunning ? '⏹ Stop' : '▶ Auto-run'}
             </button>
@@ -874,12 +888,13 @@ export default function CourtClash() {
                 className="cc-btn cc__ff"
                 onPointerDown={(e) => {
                   e.preventDefault()
-                  game.startAutoRun()
+                  if (canAutoRun) game.startAutoRun()
                 }}
                 onPointerUp={game.stopAutoRun}
                 onPointerLeave={game.stopAutoRun}
                 onPointerCancel={game.stopAutoRun}
-                disabled={state.phase !== 'play'}
+                disabled={state.phase !== 'play' || !canAutoRun}
+                title={!canAutoRun ? 'Queue a multi-step plan first (drag a player) to fast-forward' : undefined}
                 aria-label="Hold to fast-forward"
               >
                 ⏩ FF
@@ -901,7 +916,7 @@ export default function CourtClash() {
           type="button"
           className={`cc__fab${radial || plan ? ' cc__fab--hidden' : ''}${autoRunning ? ' cc__fab--stop' : ''}`}
           onClick={onFab}
-          disabled={!autoRunning && stepDisabled}
+          disabled={!autoRunning && (stepDisabled || (controlMode === 'auto' && !canAutoRun))}
           aria-label={autoRunning ? 'Stop auto-run' : controlMode === 'auto' ? 'Auto-run' : 'Next step'}
         >
           {autoRunning ? '⏹' : '▶'}

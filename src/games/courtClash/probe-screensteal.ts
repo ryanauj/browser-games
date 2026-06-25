@@ -30,21 +30,9 @@ function legalScreen() {
   return { stuck: pById(ns, mark.id).stuck, fouled: ns.events.some((e) => /Moving screen/.test(e.text)), det: det(s) }
 }
 
-// --- Screen: illegal moving screen (screener in contact, NOT set) -------------
-function movingScreen() {
-  const s = createInitialState(1)
-  const off = s.players.filter((p) => p.side === 'player')
-  const def = s.players.filter((p) => p.side === 'ai')
-  const screener = pById(s, off[1].id)
-  const mark = pById(s, def[2].id)
-  mark.pos = { x: 50, y: 50 }
-  mark.order = { kind: 'help', to: { x: 50, y: 50 } }
-  screener.pos = { x: 50, y: 54 } // body contact ...
-  screener.order = { kind: 'screen', to: { ...mark.pos }, markId: mark.id }
-  screener.screenHeld = 0 // ... but NOT set — still moving in
-  const ns = reducer(s, { type: 'RUN_STEP' })
-  return { fouled: ns.events.some((e) => /Moving screen/.test(e.text)), flipped: ns.offense !== s.offense, det: det(s) }
-}
+// (The moving-screen / illegal-screen FOUL was removed — fouls are out of the game
+//  for now, SPEC "No fouls/free throws in v1". A not-yet-set screener simply doesn't
+//  impede anyone until it establishes; it can never produce a turnover.)
 
 // --- Steal: a PLAYER-side defender gambles vs an AI ball handler. The player side
 //     is not overwritten by aiPlan, so its `steal` order persists. ------------
@@ -70,9 +58,7 @@ function steal(seed: number) {
 }
 
 const ls = legalScreen()
-console.log(`LEGAL screen:   mark.stuck=${ls.stuck} (expect>0)  fouled=${ls.fouled}  det=${ls.det}`)
-const ms = movingScreen()
-console.log(`MOVING screen:  fouled=${ms.fouled}  possession-flipped=${ms.flipped}  det=${ms.det}`)
+console.log(`LEGAL screen:   mark.stuck=${ls.stuck} (expect>0)  fouled=${ls.fouled} (expect false — no fouls)  det=${ls.det}`)
 
 let stole = 0, missStuck = 0, bad = 0
 for (let i = 0; i < 400; i++) {

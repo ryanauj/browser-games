@@ -71,15 +71,12 @@ export interface CourtProps {
    *  follow-up): speed toggle, screen tool, undo, (shoot), commit, cancel — anchored
    *  near the player so the thumb stays on the floor. null when not planning. */
   planUI: {
-    pos: Vec
     mode: MoveMode
     count: number
     screenArmed: boolean
-    isHandler: boolean
     onMode: (m: MoveMode) => void
     onScreen: () => void
     onUndo: () => void
-    onShoot: () => void
     onCommit: () => void
     onCancel: () => void
   } | null
@@ -347,7 +344,7 @@ export function Court(props: CourtProps) {
   // shown (you infer it from motion). The chain starts where the active order leaves
   // the player (its endpoint), so the head route and the chain meet seamlessly.
   const planChains = players
-    .filter((p) => p.side === yourSide && p.queue.length > 0)
+    .filter((p) => p.side === yourSide && p.queue.length > 0 && p.id !== draft?.playerId)
     .map((p) => buildChain(p.id, movePoint(p.order, players) ?? p.pos, p.queue, players))
 
   // The live AUTHORING draft (Q46) — drawn from the player's CURRENT spot through
@@ -754,19 +751,17 @@ export function Court(props: CourtProps) {
           button tap from also dropping a waypoint on the court surface. */}
       {planUI &&
         (() => {
-          // Anchor at the player, plus the user's manual drag offset (clamped so the
-          // cluster stays on the clipped court). Bias the X anchor toward the near
-          // edge and flip above the token in the bottom third.
-          const ax = Math.max(6, Math.min(94, planUI.pos.x + menuOffset.dx))
-          const ay = Math.max(4, Math.min(96, planUI.pos.y + menuOffset.dy))
-          const moved = menuOffset.dx !== 0 || menuOffset.dy !== 0
+          // Default to the BOTTOM of the court (out of the way of the path you're
+          // laying), then add the user's manual drag offset — clamped so the cluster
+          // stays on the clipped court. The menu sits ABOVE its anchor (translate
+          // -100% y), so y≈90 keeps it near the bottom edge but fully visible.
+          const ax = Math.max(6, Math.min(94, 50 + menuOffset.dx))
+          const ay = Math.max(16, Math.min(96, 90 + menuOffset.dy))
           const tx = ax < 24 ? '-12%' : ax > 76 ? '-88%' : '-50%'
-          // Once dragged, sit ON the chosen point (no token-relative flip).
-          const ty = moved ? '-50%' : planUI.pos.y > 66 ? 'calc(-100% - 26px)' : '26px'
           return (
             <div
               className="cc-planmenu"
-              style={{ left: pct(ax, COURT_W), top: pct(ay, COURT_H), transform: `translate(${tx}, ${ty})` }}
+              style={{ left: pct(ax, COURT_W), top: pct(ay, COURT_H), transform: `translate(${tx}, -100%)` }}
               onPointerDown={(e) => e.stopPropagation()}
               role="group"
               aria-label="Plan controls"
@@ -796,11 +791,6 @@ export function Court(props: CourtProps) {
           <button type="button" className="cc-planmenu__btn" onClick={planUI.onUndo} disabled={planUI.count === 0} title="Undo last waypoint">
             ↶
           </button>
-          {planUI.isHandler && (
-            <button type="button" className="cc-planmenu__btn" onClick={planUI.onShoot} title="Shoot now">
-              🏀
-            </button>
-          )}
           <button type="button" className="cc-planmenu__btn cc-planmenu__btn--ok" onClick={planUI.onCommit} disabled={planUI.count === 0} title="Commit the plan">
             ✓<span className="cc-planmenu__n">{planUI.count}</span>
           </button>
