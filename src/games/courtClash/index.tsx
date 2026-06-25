@@ -770,14 +770,9 @@ export default function CourtClash() {
                 mode: plan.mode,
                 count: plan.legs.length,
                 screenArmed: plan.armScreen,
-                isHandler: plan.playerId === state.ballHandlerId,
                 onMode: setPlanMode,
                 onScreen: armScreen,
                 onUndo: undoLeg,
-                onShoot: () => {
-                  cancelPlan()
-                  game.callShot(plan.playerId)
-                },
                 onCommit: commitPlan,
                 onCancel: cancelPlan,
               }

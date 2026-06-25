@@ -75,11 +75,9 @@ export interface CourtProps {
     mode: MoveMode
     count: number
     screenArmed: boolean
-    isHandler: boolean
     onMode: (m: MoveMode) => void
     onScreen: () => void
     onUndo: () => void
-    onShoot: () => void
     onCommit: () => void
     onCancel: () => void
   } | null
@@ -796,11 +794,6 @@ export function Court(props: CourtProps) {
           <button type="button" className="cc-planmenu__btn" onClick={planUI.onUndo} disabled={planUI.count === 0} title="Undo last waypoint">
             ↶
           </button>
-          {planUI.isHandler && (
-            <button type="button" className="cc-planmenu__btn" onClick={planUI.onShoot} title="Shoot now">
-              🏀
-            </button>
-          )}
           <button type="button" className="cc-planmenu__btn cc-planmenu__btn--ok" onClick={planUI.onCommit} disabled={planUI.count === 0} title="Commit the plan">
             ✓<span className="cc-planmenu__n">{planUI.count}</span>
           </button>
