@@ -358,21 +358,19 @@ export function shouldHalt(s: GameState): boolean {
  *  spot/marked body:
  *
  *   - SETTING (`screenHeld < SCREEN_SET_STEPS`): the screener has arrived in the
- *     setup ring but isn't established yet. If it's already in body contact
- *     (SCREEN_CONTACT) with the defender here, it ran INTO him while still
- *     moving — a MOVING (illegal) screen. Returned as an offensive foul; runStep
- *     turns it into a turnover.
+ *     setup ring but isn't established yet — it doesn't impede anyone, it just
+ *     keeps settling. (There is NO moving-screen foul: fouls are out of the game
+ *     for now, per SPEC "No fouls/free throws in v1".)
  *   - SET (`screenHeld >= SCREEN_SET_STEPS`): the screener is a planted, legal
  *     body. A marked/contacted defender is impeded — STUCK for a beat or two
  *     (the existing stuck slow + the screener-as-solid-body in applyMovement),
  *     springing the screener's teammate. Strength vs the defender's quickness
  *     scales the stick (SCREEN_BASE..SCREEN_MAX).
  *
- *  The screener is freed (→ idle) once it connects a legal pick or after
- *  SCREEN_HOLD_MAX steps. Positional + deterministic; runs before movement so the
- *  slow takes hold this step. Returns the screener at fault on an illegal screen. */
-function resolveScreens(players: Player[]): { foulBy: Player } | null {
-  let foul: { foulBy: Player } | null = null
+ *  The screener is freed (→ idle) once it connects a pick or after SCREEN_HOLD_MAX
+ *  steps. Positional + deterministic; runs before movement so the slow takes hold
+ *  this step. */
+function resolveScreens(players: Player[]): void {
   for (const s of players) {
     if (s.order.kind !== 'screen') continue
     // The pick sets where the screener is headed: a tracked defender (body) or a
@@ -401,12 +399,11 @@ function resolveScreens(players: Player[]): { foulBy: Player } | null {
         (d.order.kind === 'guard' || d.order.kind === 'double' || d.order.kind === 'steal') &&
         d.order.markId === s.id
       if (guardsScreener) continue
-      if (!isSet) {
-        // Body contact before the pick is established — the screener is still
-        // moving into the defender. ILLEGAL (moving) screen → offensive foul.
-        if (!foul) foul = { foulBy: s }
-        continue
-      }
+      // No moving-screen foul (fouls are out of the game for now — see SPEC "No
+      // fouls/free throws in v1"). A screener that hasn't established yet simply
+      // doesn't impede the defender — it keeps settling until SET (screenHeld ≥
+      // SCREEN_SET_STEPS), then the pick takes hold below.
+      if (!isSet) continue
       // SET, clean connect: sticks for SCREEN_BASE beats; a strong screener
       // against a less-quick defender holds them an extra beat (up to SCREEN_MAX).
       const quickness = (d.attr.speed + d.attr.perimeterD) / 2
@@ -420,7 +417,6 @@ function resolveScreens(players: Player[]): { foulBy: Player } | null {
       s.screenHeld = 0
     }
   }
-  return foul
 }
 
 /** Clamp a move so it can't pass through a solid body: if the path from→to
@@ -1024,21 +1020,19 @@ function catchPass(state: GameState, players: Player[], ball: Ball, receiver: Pl
 
 /** Advance one STEP of motion: decay screen/drive timers, resolve planted
  *  screens, then move every player along their standing order. Mutates players.
- *  Returns whether the ball handler's drive was throttled by traffic this step,
- *  and the screener at fault on an illegal (moving) screen this step (if any). */
+ *  Returns whether the ball handler's drive was throttled by traffic this step. */
 function advanceMotion(
   players: Player[],
   ballHandlerId: string | null,
   offense: Side,
-): { handlerStalled: boolean; screenFoul: Player | null } {
+): { handlerStalled: boolean } {
   for (const p of players) {
     if (p.stuck > 0) p.stuck -= 1
     if (p.primed > 0) p.primed -= 1 // a finishing boost expires if no shot followed
     p.bull = 0 // loose handle is recomputed each step by the collision
   }
-  const foul = resolveScreens(players)
-  const { handlerStalled } = applyMovement(players, ballHandlerId, offense)
-  return { handlerStalled, screenFoul: foul?.foulBy ?? null }
+  resolveScreens(players)
+  return applyMovement(players, ballHandlerId, offense)
 }
 
 /** Advance one step. `playerShootId` is the human's shoot intent for THIS step
@@ -1109,17 +1103,7 @@ function runStep(state: GameState, playerShootId?: string): GameState {
   //    closeouts and rotations — BEFORE any contest resolves. This is what makes
   //    defense matter: a shot/pass/drive is judged against where defenders end
   //    up, not where they started.
-  const { handlerStalled, screenFoul } = advanceMotion(players, state.ballHandlerId, state.offense)
-
-  // ILLEGAL SCREEN (Q19): a screener ran INTO a defender while still moving (not
-  // set) — an offensive foul. Dead ball, possession flips, regardless of whether
-  // the ball is held or in flight. Positional (no roll), so it replays exactly.
-  if (screenFoul) {
-    const def = opponentOf(screenFoul.side)
-    events.push({ kind: 'turnover', by: screenFoul.id, from: { ...screenFoul.pos }, text: `Moving screen — ${screenFoul.name}` })
-    log = pushLog(log, `🚫 Illegal screen on ${screenFoul.name} — offensive foul, ${sideName(def)} ball.`)
-    return setupPossession({ ...state, players, ball: null, rngState: r.next, events, log }, def, SHOT_CLOCK_STEPS, log)
-  }
+  const { handlerStalled } = advanceMotion(players, state.ballHandlerId, state.offense)
 
   // PLAN-AHEAD QUEUE ADVANCE (Q42): motion resolved — pop each player whose
   // committed order ran to completion into the next link of its chain (keyed off
