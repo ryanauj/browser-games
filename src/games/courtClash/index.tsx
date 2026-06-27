@@ -315,14 +315,15 @@ export default function CourtClash() {
     },
   })
 
-  // A pick "for" a teammate: track the man guarding them (a body, not a spot),
-  // so the screener chases the defender wherever they go. Falls back to the
-  // teammate's spot if no defender is nearby.
+  // A pick "for" a teammate: a screen is a spot on the floor (like a pass), not a
+  // body to chase. We seed the spot at the defender guarding that teammate — the
+  // place a pick does the most good — but it stays planted there; it doesn't track
+  // the man if he moves. Falls back to the teammate's spot if no defender is near.
   const screenFor = (mateId: string): Order => {
     const mate = byId(mateId)
     const def = mate ? nearestOpponent(state.players, mate) : null
-    if (def) return { kind: 'screen', to: { ...def.pos }, markId: def.id }
-    return { kind: 'screen', to: mate ? { ...mate.pos } : { ...BASKET } }
+    const at = def?.pos ?? mate?.pos ?? BASKET
+    return { kind: 'screen', to: { ...at } }
   }
 
   // --- Interaction ---------------------------------------------------------
@@ -550,7 +551,8 @@ export default function CourtClash() {
             if (canSprint) items.push(mk('Sprint', '⚡', { kind: 'drive', to: reachClamp(id, target.pos, true) }))
           }
         } else {
-          // Drop onto a teammate to set a pick FOR them (screen their defender).
+          // Drop onto a teammate to set a pick FOR them — seeds a screen at the
+          // spot of the defender guarding them (a fixed pick, not a chased body).
           items.push(mk('Screen', '🧱', screenFor(target.id)))
           items.push(mk('Move', '👟', { kind: 'move', to: reachClamp(id, target.pos), mode: 'jog' }))
           if (canSprint) items.push(mk('Sprint', '⚡', { kind: 'cut', to: reachClamp(id, target.pos, true) }))
@@ -560,8 +562,9 @@ export default function CourtClash() {
           if (canSprint) items.push(mk('Sprint', '⚡', { kind: 'drive', to: reachClamp(id, target.pos, true) }))
           items.push(mk('Move', '👟', { kind: 'move', to: spot, mode: 'jog' }))
         } else {
-          // Drop onto a defender to screen that man (track them, not the floor).
-          items.push(mk('Screen', '🧱', { kind: 'screen', to: { ...target.pos }, markId: target.id }))
+          // Drop onto a defender to set a screen at his spot — a fixed pick on
+          // the floor (like a pass), not a body to chase if he moves off it.
+          items.push(mk('Screen', '🧱', { kind: 'screen', to: { ...target.pos } }))
           items.push(mk('Move', '👟', { kind: 'move', to: spot, mode: 'jog' }))
           if (canSprint) items.push(mk('Sprint', '⚡', { kind: 'cut', to: burstSpot }))
         }
@@ -634,13 +637,13 @@ export default function CourtClash() {
           run: () => setPending({ playerId: id, need: 'point', make: (pt) => ({ kind: 'move', to: pt, mode: 'jog' }), hint: 'Tap a spot within reach.', clampReach: true }),
         })
         list.push({
-          label: 'Screen for →',
+          label: 'Screen →',
           run: () =>
             setPending({
               playerId: id,
-              need: 'teammate',
-              make: (mateId) => screenFor(mateId),
-              hint: 'Pick the teammate to set a pick for — your screener will chase their defender.',
+              need: 'point',
+              make: (pt) => ({ kind: 'screen', to: pt }),
+              hint: 'Tap a spot on the court to set a screen there.',
             }),
         })
         list.push({ label: 'Hold (rest)', run: () => issue(id, { kind: 'idle' }) })
