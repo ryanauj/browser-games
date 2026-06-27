@@ -268,7 +268,7 @@ export function clampQueue(queue: Order[]): Order[] {
  *     self-terminating decision point. This keeps the default halt driven by a
  *     committed plan LAPSING, not by a defender momentarily reaching his goal-side
  *     spot every step. Pure (positions only), so it replays exactly. */
-function orderDone(order: Order, p: Player): boolean {
+export function orderDone(order: Order, p: Player): boolean {
   switch (order.kind) {
     case 'idle':
       return true
