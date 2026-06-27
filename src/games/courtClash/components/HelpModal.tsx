@@ -38,9 +38,9 @@ export function HelpModal({ onClose }: Props) {
         <h3 className="cc-help__h">🏀 Offense — get someone open</h3>
         <p className="cc-help__sec">
           Openness is everything: a wide-open role player beats a covered star. Use <em>Pass</em> and{' '}
-          <em>Sprint</em> (attack the rim with the ball, or break open off it), and set a <em>Screen</em> for a teammate
-          — drag a player onto that teammate (or onto a defender to pick that man) and your screener hangs the defender
-          up for a step or two (watch for the 💥). A sprint to the rim
+          <em>Sprint</em> (attack the rim with the ball, or break open off it), and set a <em>Screen</em> — pick a spot
+          on the court (drag a player there, or onto a teammate/defender to seed the spot) and your screener plants
+          there, hanging up any defender who runs into it for a step or two (watch for the 💥). A sprint to the rim
           gets downhill for a finishing boost, but defenders clogging your lane <em>slow it down</em> — a wall of
           bodies bottles it up (you'll see “Bottled up!”), so attack a gap or kick it out, and a defender right on you
           can still strip it. The ring on the ball is your shot quality:{' '}
