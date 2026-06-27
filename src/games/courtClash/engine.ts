@@ -28,7 +28,6 @@ import {
   LEAD_CATCH_RADIUS,
   OPENNESS_SHOT_WEIGHT,
   OREB_BASE,
-  PASS_CATCH_RADIUS,
   PASS_INTERCEPT_RADIUS,
   PASS_LANE_RADIUS,
   PASS_MAX_STEPS,
@@ -916,12 +915,14 @@ function gatherStepsOf(p: Player): number {
   return Math.max(GATHER_MIN, Math.round(GATHER_BASE - (p.attr.shooting / 99) * GATHER_RELIEF))
 }
 
-/** Build the traveling-ball entity for a pass leaving `passer` (Q18/Q31). A lead
- *  pass aims at the fixed point `lead` (a cutter runs onto it); a direct pass
- *  homes onto the receiver each step (`to` re-aimed in advanceFlight). */
-function launchPass(passer: Player, receiver: Player, lead?: Vec): Ball {
-  const isLead = !!lead
-  const to = clampToCourt(isLead ? lead! : receiver.pos)
+/** Build the traveling-ball entity for a pass leaving `passer` (Q18/Q31). Every
+ *  pass is a fixed-aim throw to the floor point `aim` — there is no homing. The
+ *  aim is either an explicit lead spot (a cutter runs onto it) or a snapshot of an
+ *  intended teammate's position at release. Whichever offense teammate is nearest
+ *  the aim point when the ball arrives gathers it (advanceFlight, model B), so
+ *  `targetId` is kept only for the UI's flight/lane render. */
+function launchPass(passer: Player, aim: Vec, targetId: string | null): Ball {
+  const to = clampToCourt(aim)
   const dir = unitTo(passer.pos, to) ?? { x: 0, y: 1 }
   const speed = passSpeedOf(passer)
   return {
@@ -929,10 +930,9 @@ function launchPass(passer: Player, receiver: Player, lead?: Vec): Ball {
     vel: { x: dir.x * speed, y: dir.y * speed },
     from: { ...passer.pos },
     fromId: passer.id,
-    targetId: receiver.id,
+    targetId,
     to,
     kind: 'pass',
-    lead: isLead,
     steps: 0,
   }
 }
@@ -955,12 +955,10 @@ function advanceFlight(state: GameState, players: Player[], r: Roll): GameState 
   }
   const offense = state.offense
   const def = opponentOf(offense)
-  const receiver = byId(players, ball.targetId)
   let log = state.log
 
-  // A direct pass HOMES: re-aim at the receiver's current spot each step so it
-  // curves onto a moving target. A lead pass keeps its fixed aim point.
-  if (!ball.lead && receiver) ball.to = { ...receiver.pos }
+  // The aim point is FIXED at launch — no homing. Keep the velocity oriented at it
+  // so a clamped/curved first step still tracks straight to the spot.
   const speed = Math.hypot(ball.vel.x, ball.vel.y)
   const dir = unitTo(ball.pos, ball.to)
   if (dir) ball.vel = { x: dir.x * speed, y: dir.y * speed }
@@ -988,16 +986,19 @@ function advanceFlight(state: GameState, players: Player[], r: Roll): GameState 
     return setupPossession({ ...state, players, ball: null, rngState: r.next, events, log }, thief.side, SHOT_CLOCK_STEPS, log)
   }
 
-  // CATCH: a direct pass homes to the receiver; gather once it's on them.
-  if (receiver && dist(ball.pos, receiver.pos) <= PASS_CATCH_RADIUS) {
-    return catchPass(state, players, ball, receiver, r, log)
-  }
-
-  // Arrived at the aim point — for a lead pass, the cutter must be there to gather
-  // it; otherwise it's sailed into space (an errant pass the defense recovers).
+  // Arrived at the aim point — the NEAREST offense teammate within catch range
+  // gathers it (model B: a pass is bound to a spot, not a named man; whoever you
+  // routed onto it grabs it). Ties break by id so it replays byte-identical.
+  // Nobody there → it's sailed into space (an errant pass the defense recovers).
   if (dist(ball.pos, ball.to) <= ARRIVE_EPS || ball.steps >= PASS_MAX_STEPS) {
-    if (receiver && dist(receiver.pos, ball.pos) <= LEAD_CATCH_RADIUS) {
-      return catchPass(state, players, ball, receiver, r, log)
+    const gatherer = players
+      .filter((p) => p.side === offense && p.id !== ball.fromId && dist(p.pos, ball.pos) <= LEAD_CATCH_RADIUS)
+      .sort((a, b) => {
+        const d = dist(a.pos, ball.pos) - dist(b.pos, ball.pos)
+        return d !== 0 ? d : a.id.localeCompare(b.id)
+      })[0]
+    if (gatherer) {
+      return catchPass(state, players, ball, gatherer, r, log)
     }
     const events: BeatEvent[] = [
       { kind: 'turnover', by: ball.fromId, from: ball.from, to: { ...ball.pos }, text: 'Errant pass' },
@@ -1136,13 +1137,15 @@ function runStep(state: GameState, playerShootId?: string): GameState {
   //    leaves the passer's hand this step and flies over the coming steps; nobody
   //    holds it (ballHandlerId → null) until a teammate gathers it or a defender
   //    reads the lane. The ball travels its first step immediately (no frozen
-  //    launch step). A direct pass homes to the receiver; a lead aims at a spot.
+  //    launch step). Every pass is a fixed-aim throw: aim at the explicit lead
+  //    spot, else a snapshot of the named teammate's post-movement position.
   if (handler && handler.order.kind === 'pass') {
-    const target = byId(players, handler.order.toId)
-    const lead = handler.order.lead
+    const o = handler.order
+    const target = o.toId ? byId(players, o.toId) : null
+    const aim = o.lead ?? (target && target.side === handler.side ? { ...target.pos } : null)
     handler.order = { kind: 'idle' }
-    if (target && target.side === handler.side) {
-      const ball = launchPass(handler, target, lead)
+    if (aim) {
+      const ball = launchPass(handler, aim, o.toId ?? null)
       return advanceFlight({ ...state, players, ball, ballHandlerId: null }, players, r)
     }
   }

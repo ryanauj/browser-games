@@ -40,7 +40,7 @@ function orderLabel(o: Order): string {
     case 'screen':
       return `${o.kind}→(${r1(o.to.x)},${r1(o.to.y)})`
     case 'pass':
-      return `pass→${o.toId}`
+      return o.lead ? `pass→(${r1(o.lead.x)},${r1(o.lead.y)})` : `pass→${o.toId}`
     case 'guard':
     case 'double':
     case 'steal':

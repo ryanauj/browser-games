@@ -292,9 +292,6 @@ export const PASS_SPEED_PASSING = 8
  *  so the placeholder AI threads clean passes, but a man left in the lane in human
  *  play picks it off — steals become a positional read, not a roll. */
 export const PASS_INTERCEPT_RADIUS = 2.8
-/** The ball is gathered once it comes within this of the receiver (a direct pass
- *  homes onto them, so this is the catch radius). */
-export const PASS_CATCH_RADIUS = 4
 /** A ball still in flight after this many steps is an errant pass (turnover) — a
  *  safety net so a ball can never loop forever (it should arrive far sooner). */
 export const PASS_MAX_STEPS = 12
