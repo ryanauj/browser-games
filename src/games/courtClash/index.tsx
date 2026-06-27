@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { BASKET, LEAD_CATCH_RADIUS, MAX_QUEUE, PASS_LANE_RADIUS, SPRINT_FLOOR, WIN_TARGET, riskOf, type Risk } from './constants'
-import { passStealChance, shotMakeChance } from './engine'
+import { orderDone, passStealChance, shotMakeChance } from './engine'
 import { dist, distToSegment, leadCatch, nearestOpponent, reachOf, stepToward } from './geometry'
 import { useCourtClash } from './useCourtClash'
 import type { BeatEvent, MoveMode, Order, Player, Side, Vec } from './types'
@@ -145,7 +145,9 @@ export default function CourtClash() {
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [pending, setPending] = useState<Pending>(null)
   const [plan, setPlan] = useState<PlanDraft | null>(null)
-  const [controlMode, setControlMode] = useState<ControlMode>('auto')
+  // Default to per-step (manual) advance — you tap through one beat at a time and
+  // opt into auto-run explicitly.
+  const [controlMode, setControlMode] = useState<ControlMode>('manual')
   const [radial, setRadial] = useState<{ at: Vec; items: RadialItem[]; note?: string } | null>(null)
   const [flash, setFlash] = useState<{ text: string; tone: Risk | 'neutral' } | null>(null)
 
@@ -686,12 +688,19 @@ export default function CourtClash() {
 
   // --- Transport / control modes (Q48) -------------------------------------
   const autoRunning = game.autoRunning
-  // Auto-run only makes sense when there's a committed chain to fast-forward. On
-  // OFFENSE, gate it on at least one of your players having a queued plan — otherwise
-  // it just burns the possession single-stepping idle players. On defense it's still
-  // allowed (you may want to fast-forward through the AI's possession).
-  const yourHaveQueue = useMemo(() => yourPlayers.some((p) => p.queue.length > 0), [yourPlayers])
-  const canAutoRun = !onOffense || yourHaveQueue
+  // Auto-run only makes sense when there's a committed plan still in flight. On
+  // OFFENSE, gate it on at least one of your players having UNFINISHED motion — a
+  // non-empty queue OR an active order that hasn't arrived yet. Keying off the queue
+  // alone stopped auto-run one leg early: the final leg empties the queue the moment
+  // it's promoted to the active order, so the loop quit while the handler was still
+  // gliding to the last spot (and couldn't restart). Including the in-progress order
+  // carries the fast-forward through to arrival. On defense it's still allowed (you
+  // may want to fast-forward through the AI's possession).
+  const yourHavePlan = useMemo(
+    () => yourPlayers.some((p) => p.queue.length > 0 || !orderDone(p.order, p)),
+    [yourPlayers],
+  )
+  const canAutoRun = !onOffense || yourHavePlan
   // If the queues drain mid-run (or possession flips) while on offense, stop.
   useEffect(() => {
     if (autoRunning && !canAutoRun) game.stopAutoRun()
