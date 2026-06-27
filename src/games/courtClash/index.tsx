@@ -128,8 +128,9 @@ type Pending =
  *  queue-edit on the engine (P1 contract): editing any link re-commits the WHOLE
  *  chain, so the UI must hold it. `mode` is the jog/sprint stance applied to the
  *  NEXT movement waypoint laid (Q13). `armScreen` makes the next floor tap drop a
- *  screen-at-spot instead of a move waypoint. */
-type PlanDraft = { playerId: string; legs: Order[]; mode: MoveMode; armScreen: boolean }
+ *  screen-at-spot instead of a move waypoint; `armPass` makes it drop a pass aimed
+ *  at that spot (a lead a teammate runs onto). The two tools are mutually exclusive. */
+type PlanDraft = { playerId: string; legs: Order[]; mode: MoveMode; armScreen: boolean; armPass: boolean }
 
 /** Control-mode for the transport (Q48). `auto` = always-on auto-advance (a sticky
  *  Run toggle that fast-forwards through halts until you Stop or edit); `manual` =
@@ -347,13 +348,25 @@ export default function CourtClash() {
   const startPlan = (playerId: string, legs: Order[] = []) => {
     interrupt()
     const first = legs[0]
-    setPlan({ playerId, legs, mode: first && first.kind === 'move' ? first.mode : 'jog', armScreen: false })
+    setPlan({ playerId, legs, mode: first && first.kind === 'move' ? first.mode : 'jog', armScreen: false, armPass: false })
     setSelectedId(playerId)
     setPending(null)
     setRadial(null)
   }
-  const appendLeg = (o: Order) =>
-    setPlan((pl) => (pl && pl.legs.length < planCap ? { ...pl, legs: [...pl.legs, o] } : pl))
+  // Commit the current draft (if it laid anything) and immediately open authoring on
+  // another teammate — the "tap a teammate to chain plays" gesture (replaces the old
+  // tap-to-pass). Lets you lay one player's route, drop a pass spot, then jump to the
+  // cutter and route them onto it, all without leaving planning.
+  const commitAndSwitch = (toId: string) => {
+    if (plan && plan.legs.length > 0) {
+      interrupt()
+      const [first, ...rest] = plan.legs
+      game.setOrder(plan.playerId, first, rest)
+    }
+    const tp = byId(toId)
+    if (tp && tp.queue.length > 0) startPlan(toId, [tp.order, ...tp.queue])
+    else startPlan(toId)
+  }
   // Jog/Sprint also RE-TAGS the last move leg (so "drop a waypoint, then pick its
   // speed" works), and sets the stance for the next one.
   const setPlanMode = (m: MoveMode) =>
@@ -364,7 +377,8 @@ export default function CourtClash() {
       if (last && last.kind === 'move') legs[legs.length - 1] = { ...last, mode: m }
       return { ...pl, mode: m, legs }
     })
-  const armScreen = () => setPlan((pl) => (pl ? { ...pl, armScreen: !pl.armScreen } : pl))
+  const armScreen = () => setPlan((pl) => (pl ? { ...pl, armScreen: !pl.armScreen, armPass: false } : pl))
+  const armPassTool = () => setPlan((pl) => (pl ? { ...pl, armPass: !pl.armPass, armScreen: false } : pl))
   const undoLeg = () => setPlan((pl) => (pl ? { ...pl, legs: pl.legs.slice(0, -1) } : pl))
   const commitPlan = () => {
     if (!plan || plan.legs.length === 0) return
@@ -384,11 +398,12 @@ export default function CourtClash() {
   const onPlayerTap = (id: string) => {
     const p = byId(id)
     if (!p) return
-    // While authoring a plan, tapping a teammate inserts a pass point — the "tap
-    // along the path to annotate non-move actions" half of hybrid authoring (Q46).
-    // Screens are spot-based (the 🧱 tool + a floor tap), not a defender tap.
+    // While authoring a plan, tapping a DIFFERENT teammate commits the current plan
+    // and switches to authoring theirs — chaining plays without leaving planning.
+    // Passes are spot-based now (the 🎯 tool + a floor tap), not a teammate tap;
+    // screens likewise (the 🧱 tool + a floor tap).
     if (plan) {
-      if (p.side === YOU && id !== plan.playerId) appendLeg({ kind: 'pass', toId: id })
+      if (p.side === YOU && id !== plan.playerId) commitAndSwitch(id)
       return
     }
     if (pending) {
@@ -422,9 +437,13 @@ export default function CourtClash() {
     // instead; otherwise a move at the draft's current jog/sprint stance.
     if (plan) {
       setPlan((pl) => {
-        if (!pl || pl.legs.length >= planCap) return pl && pl.armScreen ? { ...pl, armScreen: false } : pl
-        const leg: Order = pl.armScreen ? { kind: 'screen', to: pt } : { kind: 'move', to: pt, mode: pl.mode }
-        return { ...pl, legs: [...pl.legs, leg], armScreen: false }
+        if (!pl || pl.legs.length >= planCap) return pl && (pl.armScreen || pl.armPass) ? { ...pl, armScreen: false, armPass: false } : pl
+        const leg: Order = pl.armScreen
+          ? { kind: 'screen', to: pt }
+          : pl.armPass
+            ? { kind: 'pass', lead: pt }
+            : { kind: 'move', to: pt, mode: pl.mode }
+        return { ...pl, legs: [...pl.legs, leg], armScreen: false, armPass: false }
       })
       return
     }
@@ -459,8 +478,12 @@ export default function CourtClash() {
       if (id === plan.playerId) {
         setPlan((pl) => {
           if (!pl || pl.legs.length >= planCap) return pl
-          const leg: Order = pl.armScreen ? { kind: 'screen', to: at } : { kind: 'move', to: at, mode: pl.mode }
-          return { ...pl, legs: [...pl.legs, leg], armScreen: false }
+          const leg: Order = pl.armScreen
+            ? { kind: 'screen', to: at }
+            : pl.armPass
+              ? { kind: 'pass', lead: at }
+              : { kind: 'move', to: at, mode: pl.mode }
+          return { ...pl, legs: [...pl.legs, leg], armScreen: false, armPass: false }
         })
       }
       setRadial(null)
@@ -652,7 +675,7 @@ export default function CourtClash() {
   }, [selected, onOffense, state.ballHandlerId, game])
 
   const hint = plan
-    ? `📋 Planning ${byId(plan.playerId)?.name ?? ''} — tap the floor to lay waypoints, a teammate to pass, a defender to screen. Commit when ready.`
+    ? `📋 Planning ${byId(plan.playerId)?.name ?? ''} — tap the floor for waypoints, 🎯/🧱 then a spot to pass/screen, or tap a teammate to commit & plan theirs.`
     : pending
       ? pending.hint
       : selected
@@ -697,7 +720,7 @@ export default function CourtClash() {
   const legIcon = (o: Order): string => {
     switch (o.kind) {
       case 'pass':
-        return '🤝'
+        return '🎯'
       case 'screen':
         return '🧱'
       case 'idle':
@@ -788,8 +811,10 @@ export default function CourtClash() {
                 mode: plan.mode,
                 count: plan.legs.length,
                 screenArmed: plan.armScreen,
+                passArmed: plan.armPass,
                 onMode: setPlanMode,
                 onScreen: armScreen,
+                onPass: armPassTool,
                 onUndo: undoLeg,
                 onCommit: commitPlan,
                 onCancel: cancelPlan,
@@ -811,7 +836,11 @@ export default function CourtClash() {
           // (thumb stays on the floor); this is the chain readout + capacity. ---
           <div className="cc__plan">
             <span className="cc__plan-hint">
-              {plan.armScreen ? '🧱 Tap a spot to set a screen there' : '📋 Tap the floor for waypoints · drag to extend · tap a teammate to pass'}
+              {plan.armScreen
+                ? '🧱 Tap a spot to set a screen there'
+                : plan.armPass
+                  ? '🎯 Tap a spot to pass there — a teammate runs onto it'
+                  : '📋 Tap the floor for waypoints · drag to extend · tap a teammate to commit & plan theirs'}
             </span>
             <div className="cc__plan-chain" aria-label={`${plan.legs.length} steps planned`}>
               {plan.legs.length === 0 ? (

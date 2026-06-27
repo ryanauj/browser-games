@@ -74,8 +74,10 @@ export interface CourtProps {
     mode: MoveMode
     count: number
     screenArmed: boolean
+    passArmed: boolean
     onMode: (m: MoveMode) => void
     onScreen: () => void
+    onPass: () => void
     onUndo: () => void
     onCommit: () => void
     onCancel: () => void
@@ -108,14 +110,15 @@ function movePoint(o: Order, players: Player[]): Vec | null {
  *  waypoint, drawn as a numbered node only). */
 function linkGlyph(o: Order): string | null {
   if (o.kind === 'screen') return '🧱'
-  if (o.kind === 'pass') return '🤝'
+  if (o.kind === 'pass') return '🎯'
   if (o.kind === 'idle') return '⏸'
   return null
 }
 
-/** A segment's visual class — jog (thin), sprint (thick/animated) or a screen
- *  approach — so the path reads its own intent at a glance (not all teal dots). */
-type SegCls = 'jog' | 'sprint' | 'screen'
+/** A segment's visual class — jog (thin), sprint (thick/animated), a screen
+ *  approach, or a pass (dashed throw lane to the aim spot) — so the path reads its
+ *  own intent at a glance (not all teal dots). */
+type SegCls = 'jog' | 'sprint' | 'screen' | 'pass'
 function segClsOf(o: Order): SegCls {
   if (o.kind === 'screen') return 'screen'
   if (o.kind === 'move') return o.mode === 'sprint' ? 'sprint' : 'jog'
@@ -143,6 +146,19 @@ function buildChain(id: string, start: Vec, orders: Order[], players: Player[]):
   const segs: { from: Vec; to: Vec; cls: SegCls }[] = []
   const links: ChainLink[] = []
   orders.forEach((o, i) => {
+    // A pass throws to its aim SPOT (the lead, or the named teammate's spot) — the
+    // passer stays put, so draw a dashed throw lane there but DON'T advance the
+    // cursor. The marker sits on the spot so you can route a cutter onto it.
+    if (o.kind === 'pass') {
+      const aim = o.lead ?? (o.toId ? players.find((t) => t.id === o.toId)?.pos : null) ?? null
+      if (aim) {
+        segs.push({ from: cursor, to: aim, cls: 'pass' })
+        links.push({ pt: { ...aim }, order: o, seq: i + 1 })
+      } else {
+        links.push({ pt: { ...cursor }, order: o, seq: i + 1 })
+      }
+      return
+    }
     const mp = movePoint(o, players)
     if (mp) {
       segs.push({ from: cursor, to: mp, cls: segClsOf(o) })
@@ -787,6 +803,9 @@ export function Court(props: CourtProps) {
           </div>
           <button type="button" className={`cc-planmenu__btn${planUI.screenArmed ? ' cc-planmenu__btn--armed' : ''}`} onClick={planUI.onScreen} title="Set a screen at a spot">
             🧱
+          </button>
+          <button type="button" className={`cc-planmenu__btn${planUI.passArmed ? ' cc-planmenu__btn--armed' : ''}`} onClick={planUI.onPass} title="Pass to a spot — a teammate runs onto it">
+            🎯
           </button>
           <button type="button" className="cc-planmenu__btn" onClick={planUI.onUndo} disabled={planUI.count === 0} title="Undo last waypoint">
             ↶

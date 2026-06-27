@@ -42,7 +42,7 @@ export type Order =
   | { kind: 'cut'; to: Vec } // off-ball hard cut — always sprint (a move/sprint specialization)
   | { kind: 'drive'; to: Vec } // ball handler attacks — always sprint (carries collision/strip/prime)
   | { kind: 'screen'; to: Vec; markId?: string } // set a pick; with markId, track that defender (a body, not a spot)
-  | { kind: 'pass'; toId: string; lead?: Vec } // one-shot pass; lead = aimed catch spot for a cutter
+  | { kind: 'pass'; toId?: string; lead?: Vec } // one-shot pass to a spot; lead = aimed floor spot, else snapshot the named teammate (toId). At least one is set; nearest teammate to the spot gathers it.
   // defense
   | { kind: 'guard'; markId: string } // man-to-man (default)
   | { kind: 'double'; markId: string } // send a second defender at the ball
@@ -102,17 +102,16 @@ export interface Player {
  *
  *  This is the FROZEN contract UI/AI build on. The shape:
  *   - `pos`      current floor position of the ball this step.
- *   - `vel`      velocity (heading × speed) in floor-units/step; re-oriented each
- *                step toward `to` for a homing direct pass, fixed for a lead.
+ *   - `vel`      velocity (heading × speed) in floor-units/step, oriented at the
+ *                FIXED aim `to` (passes don't home — the aim is set at launch).
  *   - `from`     the release point (passer/shooter spot at launch) — for the UI's
  *                flight render and the post-resolution event stamp.
  *   - `fromId`   who released it (passer / shooter).
- *   - `targetId` intended receiver (a player id), or null for a pure lead-to-spot.
- *   - `to`       the aim point: the receiver's spot (re-aimed each step for a
- *                direct pass) or a fixed lead point / the rim (shot).
- *   - `kind`     'pass' (thrown to a teammate) | 'shot' (launched at the rim).
- *   - `lead`     true = a lead pass to a fixed `to` spot (a cutter runs onto it);
- *                false = a direct pass that homes to the receiver each step.
+ *   - `targetId` the intended receiver hint (a player id) for the UI's lane
+ *                render, or null for a pure spot pass — the actual gatherer is
+ *                resolved positionally (nearest teammate to the aim), not by id.
+ *   - `to`       the FIXED aim point: a lead/spot a teammate runs onto, or the rim.
+ *   - `kind`     'pass' (thrown to a spot) | 'shot' (launched at the rim).
  *   - `steps`    steps in flight so far (for the errant-pass timeout). */
 export interface Ball {
   pos: Vec
@@ -122,7 +121,6 @@ export interface Ball {
   targetId: string | null
   to: Vec
   kind: 'pass' | 'shot'
-  lead: boolean
   steps: number
 }
 
