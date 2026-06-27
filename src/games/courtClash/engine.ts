@@ -225,15 +225,10 @@ function targetFor(p: Player, players: Player[], ballHandler: Player | undefined
     case 'drive':
     case 'help':
       return p.order.to
-    case 'screen': {
-      // A body-targeted screen tracks the defender each beat (so the pick lands
-      // on a moving man, not a patch of floor); otherwise it's a fixed spot.
-      if (p.order.markId) {
-        const mark = byId(players, p.order.markId)
-        if (mark) return { ...mark.pos }
-      }
+    case 'screen':
+      // A screen is a fixed spot on the floor (like a pass) — the screener walks
+      // to that patch and plants, it doesn't chase a moving man.
       return p.order.to
-    }
     case 'guard': {
       const mark = byId(players, p.order.markId)
       return mark ? stepToward(mark.pos, BASKET, 9) : null
@@ -372,26 +367,23 @@ export function shouldHalt(s: GameState): boolean {
 function resolveScreens(players: Player[]): void {
   for (const s of players) {
     if (s.order.kind !== 'screen') continue
-    // The pick sets where the screener is headed: a tracked defender (body) or a
-    // fixed spot. Don't accrue "set" time until the screener has actually planted
-    // there — otherwise it would instantly "screen" whoever happens to be adjacent
-    // (often its own defender) and free itself before ever travelling.
-    const tracked = s.order.markId ? byId(players, s.order.markId) : undefined
-    const targetPos = tracked ? tracked.pos : s.order.to
-    const planted = dist(s.pos, targetPos) <= SCREEN_RADIUS
+    // The pick is a fixed spot on the floor. Don't accrue "set" time until the
+    // screener has actually planted there — otherwise it would instantly "screen"
+    // whoever happens to be adjacent (often its own defender) and free itself
+    // before ever travelling.
+    const planted = dist(s.pos, s.order.to) <= SCREEN_RADIUS
     if (!planted) {
       s.screenHeld = 0 // drifted off the spot — must re-establish to set the pick
       continue
     }
     s.screenHeld += 1
     const isSet = s.screenHeld >= SCREEN_SET_STEPS
-    // Who the pick acts on: the marked defender (a body) for a tracked screen, or
-    // any opposing defender on the spot for a fixed-spot screen. Never the
-    // screener's OWN man — he's behind the pick; a screen springs a teammate by
-    // impeding THEIR defender, not the one already guarding the screener.
-    const candidates = tracked ? (tracked.side !== s.side ? [tracked] : []) : players
+    // Who the pick acts on: any opposing defender who runs into the planted spot.
+    // Never the screener's OWN man — he's behind the pick; a screen springs a
+    // teammate by impeding THEIR defender, not the one already guarding the
+    // screener.
     let connected = false
-    for (const d of candidates) {
+    for (const d of players) {
       if (d.side === s.side) continue
       if (dist(d.pos, s.pos) > SCREEN_CONTACT) continue // not in body contact (yet)
       const guardsScreener =

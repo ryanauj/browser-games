@@ -370,16 +370,10 @@ export default function CourtClash() {
     if (tp && tp.queue.length > 0) startPlan(toId, [tp.order, ...tp.queue])
     else startPlan(toId)
   }
-  // Jog/Sprint also RE-TAGS the last move leg (so "drop a waypoint, then pick its
-  // speed" works), and sets the stance for the next one.
-  const setPlanMode = (m: MoveMode) =>
-    setPlan((pl) => {
-      if (!pl) return pl
-      const legs = pl.legs.slice()
-      const last = legs[legs.length - 1]
-      if (last && last.kind === 'move') legs[legs.length - 1] = { ...last, mode: m }
-      return { ...pl, mode: m, legs }
-    })
+  // Jog/Sprint sets the stance for the NEXT move leg you drop — it does NOT retag
+  // the leg already laid. That mirrors the 🎯/🧱 tools, which arm the upcoming tap
+  // rather than the last one; the chosen stance rides on `pl.mode` into onCourtTap.
+  const setPlanMode = (m: MoveMode) => setPlan((pl) => (pl ? { ...pl, mode: m } : pl))
   const armScreen = () => setPlan((pl) => (pl ? { ...pl, armScreen: !pl.armScreen, armPass: false } : pl))
   const armPassTool = () => setPlan((pl) => (pl ? { ...pl, armPass: !pl.armPass, armScreen: false } : pl))
   const undoLeg = () => setPlan((pl) => (pl ? { ...pl, legs: pl.legs.slice(0, -1) } : pl))
@@ -426,11 +420,35 @@ export default function CourtClash() {
     const stack = state.players
       .filter((q) => dist(q.pos, p.pos) <= STACK_RADIUS)
       .sort((a, b) => a.id.localeCompare(b.id))
-    setSelectedId((cur) => {
-      if (stack.length <= 1) return cur === p.id ? null : p.id
-      const idx = stack.findIndex((q) => q.id === cur)
-      return idx === -1 ? p.id : stack[(idx + 1) % stack.length].id
-    })
+    const nextId =
+      stack.length <= 1
+        ? selectedId === p.id
+          ? null
+          : p.id
+        : (() => {
+            const idx = stack.findIndex((q) => q.id === selectedId)
+            return idx === -1 ? p.id : stack[(idx + 1) % stack.length].id
+          })()
+    setSelectedId(nextId)
+    // Landing on one of YOUR players pops the action radial right at their feet —
+    // a tap is the whole gesture (no reach for the bottom bar). An opponent (or
+    // deselecting) just clears it; scouting still shows via the AttrPanel.
+    const np = byId(nextId)
+    if (np && np.side === YOU) {
+      setRadial({
+        at: { ...np.pos },
+        items: buildActions(np).map((a) => ({
+          icon: a.icon,
+          label: a.label,
+          // Dismiss the wheel on pick — the setPending actions (Pass/Move/Screen)
+          // don't issue an order straight away, so they wouldn't close it otherwise.
+          run: () => {
+            setRadial(null)
+            a.run()
+          },
+        })),
+      })
+    } else setRadial(null)
   }
 
   const onCourtTap = (pt: Vec) => {
@@ -610,34 +628,40 @@ export default function CourtClash() {
 
   const onRadialCancel = () => setRadial(null)
 
-  // --- Action menu for the selected player --------------------------------
-  const actions = useMemo(() => {
-    if (!selected || selected.side !== YOU) return []
-    const id = selected.id
-    // `mode` tags movement actions slow-nimble (jog) vs fast-committed (sprint) so
-    // the central decision is legible on the buttons, not just buried in Help.
-    // Sprint drops off the menu only when the player is too gassed to honor it
-    // (mirrors the drag radial — see onDragRelease).
-    const canSprint = selected.stamina >= SPRINT_FLOOR
-    const list: { label: string; run: () => void; sub?: string; mode?: 'jog' | 'sprint' }[] = []
+  // --- Action set for one of your players ----------------------------------
+  type ActionItem = { icon: string; label: string; run: () => void; sub?: string; mode?: 'jog' | 'sprint' }
+  // The same list feeds both the bottom-bar buttons AND the on-court radial that
+  // pops at the player's feet on a tap (onPlayerTap). A plain hoisted function (not
+  // a memo) so onPlayerTap can build the wheel for the just-tapped player in the
+  // same beat, before `selected` has re-rendered.
+  function buildActions(sel: Player): ActionItem[] {
+    const id = sel.id
+    // `mode` tags movement slow-nimble (jog) vs fast-committed (sprint). Sprint
+    // drops off only when the player is too gassed to honor it (mirrors the drag
+    // radial — see onDragRelease).
+    const canSprint = sel.stamina >= SPRINT_FLOOR
+    const list: ActionItem[] = []
     if (onOffense) {
       if (id === state.ballHandlerId) {
-        list.push({ label: '🏀 Shoot', run: () => game.callShot(id) })
+        list.push({ icon: '🏀', label: 'Shoot', run: () => game.callShot(id) })
         list.push({
-          label: 'Pass →',
+          icon: '🤝',
+          label: 'Pass',
           run: () => setPending({ playerId: id, need: 'teammate', make: (t) => ({ kind: 'pass', toId: t }), hint: 'Pick a teammate to pass to.', risk: 'pass' }),
         })
-        if (canSprint) list.push({ label: 'Sprint', sub: 'fast, committed', mode: 'sprint', run: () => issue(id, { kind: 'drive', to: reachClamp(id, BASKET, true) }) })
+        if (canSprint) list.push({ icon: '⚡', label: 'Sprint', sub: 'fast, committed', mode: 'sprint', run: () => issue(id, { kind: 'drive', to: reachClamp(id, BASKET, true) }) })
       } else {
-        if (canSprint) list.push({ label: 'Sprint', sub: 'fast, committed', mode: 'sprint', run: () => issue(id, { kind: 'cut', to: reachClamp(id, BASKET, true) }) })
+        if (canSprint) list.push({ icon: '⚡', label: 'Sprint', sub: 'fast, committed', mode: 'sprint', run: () => issue(id, { kind: 'cut', to: reachClamp(id, BASKET, true) }) })
         list.push({
-          label: 'Move →',
+          icon: '👟',
+          label: 'Move',
           sub: 'slow, nimble',
           mode: 'jog',
           run: () => setPending({ playerId: id, need: 'point', make: (pt) => ({ kind: 'move', to: pt, mode: 'jog' }), hint: 'Tap a spot within reach.', clampReach: true }),
         })
         list.push({
-          label: 'Screen →',
+          icon: '🧱',
+          label: 'Screen',
           run: () =>
             setPending({
               playerId: id,
@@ -646,26 +670,29 @@ export default function CourtClash() {
               hint: 'Tap a spot on the court to set a screen there.',
             }),
         })
-        list.push({ label: 'Hold (rest)', run: () => issue(id, { kind: 'idle' }) })
+        list.push({ icon: '⏸', label: 'Hold', sub: 'rest', run: () => issue(id, { kind: 'idle' }) })
       }
     } else {
       list.push({
-        label: 'Guard →',
+        icon: '🛡️',
+        label: 'Guard',
         run: () => setPending({ playerId: id, need: 'enemy', make: (m) => ({ kind: 'guard', markId: m }), hint: 'Pick the man to guard (switch).' }),
       })
       if (state.ballHandlerId) {
-        list.push({ label: 'Double', run: () => issue(id, { kind: 'double', markId: state.ballHandlerId! }) })
-        list.push({ label: 'Steal', run: () => issue(id, { kind: 'steal', markId: state.ballHandlerId! }) })
+        list.push({ icon: '👥', label: 'Double', run: () => issue(id, { kind: 'double', markId: state.ballHandlerId! }) })
+        list.push({ icon: '🖐️', label: 'Steal', run: () => issue(id, { kind: 'steal', markId: state.ballHandlerId! }) })
       }
       list.push({
-        label: 'Move →',
+        icon: '👟',
+        label: 'Move',
         sub: 'slow, nimble',
         mode: 'jog',
         run: () => setPending({ playerId: id, need: 'point', make: (pt) => ({ kind: 'help', to: pt }), hint: 'Tap a spot within reach.', clampReach: true }),
       })
       if (canSprint) {
         list.push({
-          label: 'Sprint →',
+          icon: '⚡',
+          label: 'Sprint',
           sub: 'fast, committed cutoff',
           mode: 'sprint',
           run: () => setPending({ playerId: id, need: 'point', make: (pt) => ({ kind: 'help', to: pt, mode: 'sprint' }), hint: 'Tap a spot to sprint and cut off.', clampReach: true }),
@@ -675,9 +702,10 @@ export default function CourtClash() {
     // Hybrid authoring entry (Q46): chain a multi-step plan for this player —
     // available to both sides (a planned cut/relocation chain, or a defensive
     // rotation path), committed atomically as (order, queue).
-    list.push({ label: '📋 Plan chain', sub: 'multi-step', run: () => startPlan(id) })
+    list.push({ icon: '📋', label: 'Plan', sub: 'multi-step', run: () => startPlan(id) })
     return list
-  }, [selected, onOffense, state.ballHandlerId, game])
+  }
+  const actions = selected && selected.side === YOU ? buildActions(selected) : []
 
   const hint = plan
     ? `📋 Planning ${byId(plan.playerId)?.name ?? ''} — tap the floor for waypoints, 🎯/🧱 then a spot to pass/screen, or tap a teammate to commit & plan theirs.`
@@ -875,19 +903,28 @@ export default function CourtClash() {
             ✕ Cancel
           </button>
         ) : selected && selected.side === YOU ? (
-          <div className="cc__actions">
-            {actions.map((a) => (
-              <button
-                key={a.label}
-                type="button"
-                className={`cc-btn cc-btn--action${a.mode ? ` cc-btn--${a.mode}` : ''}`}
-                onClick={a.run}
-              >
-                <span className="cc-action__label">{a.label}</span>
-                {a.sub && <span className="cc-action__sub">{a.sub}</span>}
-              </button>
-            ))}
-          </div>
+          // The action wheel is the primary picker (it pops on the court at the
+          // player); these bottom-bar buttons are the same set, shown only once the
+          // wheel is dismissed so they don't double up while it's open.
+          radial ? (
+            <span className="cc__bar-tip">{selected.name} — pick an action from the wheel.</span>
+          ) : (
+            <div className="cc__actions">
+              {actions.map((a) => (
+                <button
+                  key={a.label}
+                  type="button"
+                  className={`cc-btn cc-btn--action${a.mode ? ` cc-btn--${a.mode}` : ''}`}
+                  onClick={a.run}
+                >
+                  <span className="cc-action__label">
+                    <span aria-hidden>{a.icon}</span> {a.label}
+                  </span>
+                  {a.sub && <span className="cc-action__sub">{a.sub}</span>}
+                </button>
+              ))}
+            </div>
+          )
         ) : selected ? (
           <span className="cc__bar-tip">Scouting {selected.name} — tap your own players to give orders.</span>
         ) : (
