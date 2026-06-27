@@ -100,9 +100,8 @@ export const HOOP_HIT = 10
 /** The floor point an order RELOCATES the player to, or null for an order that
  *  holds position (pass / idle / reactive). Mirrors the single-order route logic so
  *  a queue chain and its head route agree. */
-function movePoint(o: Order, players: Player[]): Vec | null {
-  if (o.kind === 'move' || o.kind === 'cut' || o.kind === 'drive' || o.kind === 'help') return o.to
-  if (o.kind === 'screen') return (o.markId ? players.find((t) => t.id === o.markId)?.pos : null) ?? o.to
+function movePoint(o: Order): Vec | null {
+  if (o.kind === 'move' || o.kind === 'cut' || o.kind === 'drive' || o.kind === 'help' || o.kind === 'screen') return o.to
   return null
 }
 
@@ -159,7 +158,7 @@ function buildChain(id: string, start: Vec, orders: Order[], players: Player[]):
       }
       return
     }
-    const mp = movePoint(o, players)
+    const mp = movePoint(o)
     if (mp) {
       segs.push({ from: cursor, to: mp, cls: segClsOf(o) })
       links.push({ pt: { ...mp }, order: o, seq: i + 1 })
@@ -341,7 +340,7 @@ export function Court(props: CourtProps) {
       const o = p.order
       let to: Vec | null = null
       if (o.kind === 'move' || o.kind === 'cut' || o.kind === 'drive' || o.kind === 'help') to = o.to
-      else if (o.kind === 'screen') to = (o.markId ? players.find((t) => t.id === o.markId)?.pos : null) ?? o.to
+      else if (o.kind === 'screen') to = o.to
       else if (o.kind === 'pass') to = o.lead ?? players.find((t) => t.id === o.toId)?.pos ?? null
       else if (o.kind === 'guard' || o.kind === 'steal' || o.kind === 'double') {
         const mk = o.kind === 'double' ? ballHandlerId : (o as { markId: string }).markId
@@ -361,7 +360,7 @@ export function Court(props: CourtProps) {
   // the player (its endpoint), so the head route and the chain meet seamlessly.
   const planChains = players
     .filter((p) => p.side === yourSide && p.queue.length > 0 && p.id !== draft?.playerId)
-    .map((p) => buildChain(p.id, movePoint(p.order, players) ?? p.pos, p.queue, players))
+    .map((p) => buildChain(p.id, movePoint(p.order) ?? p.pos, p.queue, players))
 
   // The live AUTHORING draft (Q46) — drawn from the player's CURRENT spot through
   // every laid leg (nothing committed yet), in a brighter "drafting" style.
@@ -664,11 +663,9 @@ export function Court(props: CourtProps) {
         const tRisk = targetRisk[p.id]
         const targetCls = isTarget ? ` cc-player--target${tRisk ? ` cc-player--risk-${tRisk}` : ''}` : ''
         // Screen feedback: a screener shows a pick badge, and goes "planted" once
-        // it reaches the man/spot it's screening.
+        // it reaches the spot it's screening.
         const screenOrder = p.order.kind === 'screen' ? p.order : null
-        const screenTarget = screenOrder
-          ? ((screenOrder.markId ? players.find((t) => t.id === screenOrder.markId)?.pos : null) ?? screenOrder.to)
-          : null
+        const screenTarget = screenOrder ? screenOrder.to : null
         const planted = !!screenTarget && dist(p.pos, screenTarget) <= SCREEN_RADIUS
         const screenCls = screenOrder ? ` cc-player--screening${planted ? ' cc-player--planted' : ''}` : ''
         // The defender nearest a pass/steal lane in flight — lit up as the man

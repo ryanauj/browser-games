@@ -41,7 +41,7 @@ export type Order =
   | { kind: 'move'; to: Vec; mode: MoveMode } // relocate (jog) or committed sprint (Q13)
   | { kind: 'cut'; to: Vec } // off-ball hard cut — always sprint (a move/sprint specialization)
   | { kind: 'drive'; to: Vec } // ball handler attacks — always sprint (carries collision/strip/prime)
-  | { kind: 'screen'; to: Vec; markId?: string } // set a pick; with markId, track that defender (a body, not a spot)
+  | { kind: 'screen'; to: Vec } // set a pick at a fixed spot on the floor (like a pass, you aim a location)
   | { kind: 'pass'; toId?: string; lead?: Vec } // one-shot pass to a spot; lead = aimed floor spot, else snapshot the named teammate (toId). At least one is set; nearest teammate to the spot gathers it.
   // defense
   | { kind: 'guard'; markId: string } // man-to-man (default)

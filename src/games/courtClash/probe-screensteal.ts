@@ -24,7 +24,7 @@ function legalScreen() {
   mark.pos = { x: 50, y: 50 }
   mark.order = { kind: 'help', to: { x: 50, y: 50 } } // not guarding the screener
   screener.pos = { x: 50, y: 55 } // ~5 away → body contact
-  screener.order = { kind: 'screen', to: { ...mark.pos }, markId: mark.id }
+  screener.order = { kind: 'screen', to: { ...mark.pos } }
   screener.screenHeld = 5 // already established (SET)
   const ns = reducer(s, { type: 'RUN_STEP' })
   return { stuck: pById(ns, mark.id).stuck, fouled: ns.events.some((e) => /Moving screen/.test(e.text)), det: det(s) }

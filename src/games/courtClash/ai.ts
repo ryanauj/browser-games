@@ -470,7 +470,7 @@ function planOffense(state: GameState, side: Side): AiPlan {
       cands.push({
         orders: assemble(
           { kind: 'drive', to: { ...BASKET } },
-          { playerId: screener.id, order: { kind: 'screen', to: { ...onBall.pos }, markId: onBall.id } },
+          { playerId: screener.id, order: { kind: 'screen', to: { ...onBall.pos } } },
         ),
         bonus: 0,
         label: 'screen',
