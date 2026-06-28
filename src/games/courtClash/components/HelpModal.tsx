@@ -22,7 +22,9 @@ export function HelpModal({ onClose }: Props) {
           <span className="cc-help__quick-label">Quick start</span>
           <ol>
             <li>
-              <em>Tap</em> a player for an action menu — or <em>drag</em> them onto a spot or another player.
+              <em>Drag</em> a player to a spot to plan a <em>Move</em> there — a planner opens, where you can add more
+              steps or hit <em>✓</em> to lock it in. <em>Tap</em> them first to make that first step a Screen, Sprint or
+              Pass instead.
             </li>
             <li>
               Set orders for any of your five (they stick until you change them), then press <em>▶ Next Step</em>.
@@ -38,9 +40,9 @@ export function HelpModal({ onClose }: Props) {
         <h3 className="cc-help__h">🏀 Offense — get someone open</h3>
         <p className="cc-help__sec">
           Openness is everything: a wide-open role player beats a covered star. Use <em>Pass</em> and{' '}
-          <em>Sprint</em> (attack the rim with the ball, or break open off it), and set a <em>Screen</em> — pick a spot
-          on the court (drag a player there, or onto a teammate/defender to seed the spot) and your screener plants
-          there, hanging up any defender who runs into it for a step or two (watch for the 💥). A sprint to the rim
+          <em>Sprint</em> (attack the rim with the ball, or break open off it), and set a <em>Screen</em> — tap a player,
+          pick Screen, then drag or tap the spot on the court. Your screener plants on that floor spot, hanging up any
+          defender who runs into it for a step or two (watch for the 💥). A sprint to the rim
           gets downhill for a finishing boost, but defenders clogging your lane <em>slow it down</em> — a wall of
           bodies bottles it up (you'll see “Bottled up!”), so attack a gap or kick it out, and a defender right on you
           can still strip it. The ring on the ball is your shot quality:{' '}
@@ -48,16 +50,16 @@ export function HelpModal({ onClose }: Props) {
           bad. Inside the arc is 2, beyond it 3.
         </p>
         <p className="cc-help__sec">
-          <strong>Hit a cutter in stride:</strong> send a teammate on a <em>Sprint</em>, then drag the ball handler to the
-          open spot <em>ahead</em> of them and pick <em>🎯 Lead pass</em>. They catch it on the move — a give-and-go to
-          the rim. You choose their next move once they gather it.
+          <strong>Hit a cutter in stride:</strong> send a teammate on a <em>Sprint</em>, then tap the ball handler, pick{' '}
+          <em>🎯 Pass</em>, and drop it on the open spot <em>ahead</em> of them. The nearest teammate runs onto it and
+          catches it on the move — a give-and-go to the rim. You choose their next move once they gather it.
         </p>
 
         <h3 className="cc-help__h">🛡️ Defense — lock down</h3>
         <p className="cc-help__sec">
           Drag a player onto an opponent to <em>Guard</em> (or switch), <em>Double</em> the ball, or <em>Steal</em>{' '}
-          (a gamble) — or onto a spot to <em>Move</em> into help, or <em>Sprint</em> to commit to a cutoff. Force a miss
-          or a steal, or run the{' '}
+          (a gamble) — or drag to a spot to <em>Move</em> into help (tap → <em>Sprint</em> to commit to a cutoff). Force a
+          miss or a steal, or run the{' '}
           <em>{SHOT_CLOCK_STEPS}-step shot clock</em> out for a turnover.
         </p>
 
