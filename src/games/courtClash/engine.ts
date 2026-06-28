@@ -302,9 +302,19 @@ function advanceQueues(players: Player[], committed: Map<string, Order>): void {
   }
 }
 
-/** Salient-event kinds (Q43) — the SINGLE tunable list for the opt-in halt tier.
- *  STUB: start with possession-change / shot-resolved / turnover; the full set is
- *  deferred tuning (P2). Add kinds HERE — don't scatter the check. */
+/** Salient-event kinds (Q43) — the SINGLE tunable list for the opt-in halt tier: the
+ *  beats where a side that armed `haltOnSalient` wants the auto-run to stop and let it
+ *  re-decide, even mid-possession. A sane initial set covering the moments a coach
+ *  would actually want the ball back on:
+ *   - shot RESOLVED (make / miss / block) — the look went up; what next is a fresh call.
+ *   - possession FLIPPED the hard way (turnover, steal — the handler stripped) — the
+ *     plan is moot, replan immediately.
+ *   - the shot clock EXPIRED (shotclock) — dead ball, new possession.
+ *   - a LOOSE BALL (rebound) — the ball is up for grabs; who chases / boxes out is a
+ *     live decision the committed plan didn't cover.
+ *   - the handler BOTTLED UP (stall) — the committed line went nowhere; bail and reset.
+ *  Finer tuning (a "clean look opens", help rotation read, etc.) is positional, not an
+ *  event, and is deferred. Add kinds HERE — keep the check one list, don't scatter it. */
 const SALIENT_EVENT_KINDS: ReadonlyArray<BeatEvent['kind']> = [
   'shotMake',
   'shotMiss',
@@ -312,6 +322,8 @@ const SALIENT_EVENT_KINDS: ReadonlyArray<BeatEvent['kind']> = [
   'turnover',
   'steal',
   'shotclock',
+  'rebound',
+  'stall',
 ]
 
 /** The halt predicate for the auto-run loop (Q43/Q44) — a PURE read of the state
