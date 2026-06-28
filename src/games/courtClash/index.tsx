@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { BASKET, LEAD_CATCH_RADIUS, MAX_QUEUE, PASS_LANE_RADIUS, SPRINT_FLOOR, WIN_TARGET, riskOf, type Risk } from './constants'
 import { orderDone, passStealChance, shotMakeChance } from './engine'
-import { dist, distToSegment, leadCatch, nearestOpponent, reachOf, stepToward } from './geometry'
+import { dist, distToSegment, leadCatch, reachOf, stepToward } from './geometry'
 import { useCourtClash } from './useCourtClash'
 import type { BeatEvent, MoveMode, Order, Player, Side, Vec } from './types'
 import { AttrPanel } from './components/AttrPanel'
@@ -276,12 +276,6 @@ export default function CourtClash() {
     return p ? stepToward(p.pos, to, reachOf(p, burst)) : to
   }
 
-  // Is a spot reachable in one beat? Used to decide whether a drag is ambiguous
-  // (a shot/pass that could also be a move/drive — show both in the radial).
-  const withinReach = (playerId: string, pt: Vec, burst = false): boolean => {
-    const p = byId(playerId)
-    return !!p && dist(p.pos, pt) <= reachOf(p, burst) + 0.01
-  }
 
   // The teammate a drag-to-spot leads, and whether they can actually gather it
   // there this beat. Picks whoever comes closest to the aimed catch point (their
@@ -315,17 +309,6 @@ export default function CourtClash() {
     },
   })
 
-  // A pick "for" a teammate: a screen is a spot on the floor (like a pass), not a
-  // body to chase. We seed the spot at the defender guarding that teammate — the
-  // place a pick does the most good — but it stays planted there; it doesn't track
-  // the man if he moves. Falls back to the teammate's spot if no defender is near.
-  const screenFor = (mateId: string): Order => {
-    const mate = byId(mateId)
-    const def = mate ? nearestOpponent(state.players, mate) : null
-    const at = def?.pos ?? mate?.pos ?? BASKET
-    return { kind: 'screen', to: { ...at } }
-  }
-
   // --- Interaction ---------------------------------------------------------
   // Any hands-on edit pauses an in-progress auto-run (Q48 drag-to-edit interrupt):
   // you took the wheel, so the floor stops fast-forwarding until you advance again.
@@ -355,6 +338,23 @@ export default function CourtClash() {
     setSelectedId(playerId)
     setPending(null)
     setRadial(null)
+  }
+  // Open the plan editor seeded with `leg` as the first waypoint, appending to any
+  // already-committed chain rather than discarding it. The drag-to-author entry.
+  const openPlanWith = (playerId: string, leg: Order) => {
+    const pl = byId(playerId)
+    if (pl && pl.queue.length > 0) startPlan(playerId, [pl.order, ...pl.queue, leg])
+    else startPlan(playerId, [leg])
+  }
+  // Translate a one-shot wheel order into the matching plan WAYPOINT at `at` — a
+  // plan leg is always a move (jog/sprint) / screen / pass placed on the floor (no
+  // one-beat reach clamp, no body snapping), so a "sprint to a spot" becomes a
+  // sprint-mode move leg, a drive/cut likewise.
+  const legFromOrder = (o: Order, at: Vec): Order => {
+    if (o.kind === 'screen') return { kind: 'screen', to: at }
+    if (o.kind === 'pass') return { kind: 'pass', lead: at }
+    const sprint = o.kind === 'cut' || o.kind === 'drive' || ((o.kind === 'move' || o.kind === 'help') && o.mode === 'sprint')
+    return { kind: 'move', to: at, mode: sprint ? 'sprint' : 'jog' }
   }
   // Commit the current draft (if it laid anything) and immediately open authoring on
   // another teammate — the "tap a teammate to chain plays" gesture (replaces the old
@@ -468,33 +468,36 @@ export default function CourtClash() {
       })
       return
     }
+    // A wheel-armed action placed by tapping a spot opens the plan editor too (same
+    // as dragging it there) — one consistent model: arm → place → it lands as the
+    // first plan leg you can extend or commit.
     if (pending?.need === 'point') {
-      const dest = pending.clampReach ? reachClamp(pending.playerId, pt) : pt
-      issue(pending.playerId, pending.make(dest))
+      openPlanWith(pending.playerId, legFromOrder(pending.make(pt), pt))
       return
     }
     setSelectedId(null)
   }
 
-  // Drag-release opens a radial of the actions that fit the drop target: drop
-  // onto a player for pass/screen/guard/etc., or on a spot for move/screen/sprint.
-  // One sensible action (Move/Sprint) is the primary; a lone action just
-  // fires (drag-to-teammate passes instantly, drag-to-floor on defense moves).
+  // Drag-release opens the plan editor with a first leg at the exact spot you let
+  // go of — a Move by default, or whatever the wheel armed for this player (a
+  // pending point — move / screen / sprint / pass). That first leg lands on the
+  // floor where you released, NEVER snapped to a nearby body, so a screen dropped
+  // on a defender sits on that patch of floor. The one body-aimed gesture is
+  // dropping onto an OPPONENT (defense guard/double/steal, or the handler attacking
+  // him) — those stay one-shot orders, not plan legs.
   const onDragRelease = (id: string, at: Vec, targetId: string | null) => {
     const p = byId(id)
     if (!p || p.side !== YOU) {
       setRadial(null)
       return
     }
-    const target0 = byId(targetId)
-    const isHandler0 = id === state.ballHandlerId
-    const onEnemy0 = !!target0 && target0.side !== YOU
-    const onTeammate0 = !!target0 && target0.side === YOU && target0.id !== id
-    const onHoop0 = onOffense && isHandler0 && dist(at, BASKET) <= HOOP_HIT
+    const isHandler = id === state.ballHandlerId
+    const target = byId(targetId)
+    const onEnemy = !!target && target.side !== YOU
+    const onHoop = onOffense && isHandler && dist(at, BASKET) <= HOOP_HIT
 
-    // Already authoring? A drag on the planned player EXTENDS the path — drop a
-    // waypoint (or a screen if the tool is armed) at the release point. Drags on
-    // anyone else are ignored mid-plan.
+    // Already authoring a plan? A drag on the planned player EXTENDS the path —
+    // drop a waypoint (or a screen/pass if a tool is armed) at the release point.
     if (plan) {
       if (id === plan.playerId) {
         setPlan((pl) => {
@@ -511,119 +514,55 @@ export default function CourtClash() {
       return
     }
 
-    // DRAG = LAY A PLAN (Q46 entry). A drag on one of your players starts a chain,
-    // the drag laying the first leg — so planning is one gesture, no tap-then-Plan.
-    // The two NON-route gestures stay one-shots (not a path): the handler shooting
-    // at the rim, and a drop onto an enemy (offense drive-at / defense
-    // guard·double·steal) — those keep the contextual radial below.
-    if (!onHoop0 && !onEnemy0) {
-      const first: Order = onTeammate0 && isHandler0 ? { kind: 'pass', toId: target0!.id } : { kind: 'move', to: at, mode: 'jog' }
-      // Already has a plan? Append the new leg to it rather than discarding it.
-      if (p.queue.length > 0) startPlan(id, [p.order, ...p.queue, first])
-      else startPlan(id, [first])
+    // Wheel armed an action for THIS player → open the plan editor with that as
+    // the first leg, laid at the EXACT release point. Even if you release right on
+    // a defender, a screen lands on that floor spot, not on him — plan legs are
+    // waypoints (never snapped, never clamped to one beat).
+    if (pending && pending.playerId === id && pending.need === 'point') {
+      openPlanWith(id, legFromOrder(pending.make(at), at))
       return
     }
 
-    const spot = reachClamp(id, at)
-    const burstSpot = reachClamp(id, at, true) // drives/cuts reach the outer ring
-    // Sprint is always on the table next to Move — except when the player is so
-    // gassed the engine would collapse the burst to a jog anyway (below the
-    // sprint floor). Otherwise the speed choice silently disappears on some drop
-    // targets, which reads as a bug.
-    const canSprint = p.stamina >= SPRINT_FLOOR
-    const target = byId(targetId)
-    const onTeammate = !!target && target.side === YOU && target.id !== id
-    const onEnemy = !!target && target.side !== YOU
-    const mk = (label: string, icon: string, order: Order): RadialItem => ({
-      label,
-      icon,
-      run: () => issue(id, order),
-    })
-    const items: RadialItem[] = []
-    // A one-line caption explaining the offered actions in-context (e.g. the
-    // difference between a lead pass and a risky pass), shown under the menu.
-    let note: string | undefined
-
-    if (onOffense) {
-      const isHandler = id === state.ballHandlerId
-      const onHoop = isHandler && dist(at, BASKET) <= HOOP_HIT
-      const lead = isHandler ? bestLeadTarget(id, at) : null
-      if (onHoop) {
-        // Drag the handler onto the rim to shoot — but always also offer to
-        // attack the basket (clamped to reach) so you're never forced into a
-        // shot when you meant to drive there. If a cutter is breaking to the
-        // rim, you can lead them with the pass instead (only when it's a catch —
-        // no risky throws cluttering the shoot menu).
-        items.push(shootItem(id))
-        if (canSprint) items.push(mk('Sprint', '⚡', { kind: 'drive', to: reachClamp(id, BASKET, true) }))
-        if (lead?.catchable) {
-          items.push(mk('Lead pass', '🎯', { kind: 'pass', toId: lead.mover.id, lead: at }))
-          note = '🎯 Lead pass — drops it ahead of a cutter to catch in stride.'
-        }
-      } else if (onTeammate && target) {
-        if (isHandler) {
-          items.push(mk('Pass', '🤝', { kind: 'pass', toId: target.id }))
-          // If that teammate is within reach, you might mean to relocate, not pass.
-          if (withinReach(id, target.pos)) {
-            items.push(mk('Move', '👟', { kind: 'move', to: reachClamp(id, target.pos), mode: 'jog' }))
-            if (canSprint) items.push(mk('Sprint', '⚡', { kind: 'drive', to: reachClamp(id, target.pos, true) }))
-          }
-        } else {
-          // Drop onto a teammate to set a pick FOR them — seeds a screen at the
-          // spot of the defender guarding them (a fixed pick, not a chased body).
-          items.push(mk('Screen', '🧱', screenFor(target.id)))
-          items.push(mk('Move', '👟', { kind: 'move', to: reachClamp(id, target.pos), mode: 'jog' }))
-          if (canSprint) items.push(mk('Sprint', '⚡', { kind: 'cut', to: reachClamp(id, target.pos, true) }))
-        }
-      } else if (onEnemy && target) {
-        if (isHandler) {
-          if (canSprint) items.push(mk('Sprint', '⚡', { kind: 'drive', to: reachClamp(id, target.pos, true) }))
-          items.push(mk('Move', '👟', { kind: 'move', to: spot, mode: 'jog' }))
-        } else {
-          // Drop onto a defender to set a screen at his spot — a fixed pick on
-          // the floor (like a pass), not a body to chase if he moves off it.
-          items.push(mk('Screen', '🧱', { kind: 'screen', to: { ...target.pos } }))
-          items.push(mk('Move', '👟', { kind: 'move', to: spot, mode: 'jog' }))
-          if (canSprint) items.push(mk('Sprint', '⚡', { kind: 'cut', to: burstSpot }))
-        }
-      } else if (isHandler) {
-        // Aiming at open floor: lead a teammate breaking toward here with a pass
-        // — a clean catch if someone can gather it in stride, a flagged "risky"
-        // throw if it sails past everyone (a likely turnover). Either way the
-        // handler's own drive/move stay on the menu.
-        if (lead) {
-          if (lead.catchable) {
-            items.push(mk('Lead pass', '🎯', { kind: 'pass', toId: lead.mover.id, lead: at }))
-            note = '🎯 Lead pass — drops it ahead of a cutter to catch in stride.'
-          } else {
-            items.push(mk('Risky pass', '🎲', { kind: 'pass', toId: lead.mover.id, lead: at }))
-            note = '🎲 Risky pass — no teammate can reach this spot; likely a turnover.'
-          }
-        }
-        if (canSprint) items.push(mk('Sprint', '⚡', { kind: 'drive', to: burstSpot }))
-        items.push(mk('Move', '👟', { kind: 'move', to: spot, mode: 'jog' }))
+    // The one body-aimed drop: onto an opponent. On defense that's the ball-
+    // pressure menu (guard / double / steal); for the handler it's an attack at
+    // that man. Off-ball offense has nothing to do TO a defender, so it falls
+    // through to a plain move.
+    if (onEnemy && target && (!onOffense || isHandler)) {
+      const canSprint = p.stamina >= SPRINT_FLOOR
+      const mk = (label: string, icon: string, order: Order): RadialItem => ({ label, icon, run: () => issue(id, order) })
+      const items: RadialItem[] = []
+      if (!onOffense) {
+        items.push(mk('Guard', '🛡️', { kind: 'guard', markId: target.id }))
+        items.push(mk('Double', '👥', { kind: 'double', markId: target.id }))
+        items.push(mk('Steal', '🖐️', { kind: 'steal', markId: target.id }))
       } else {
-        items.push(mk('Move', '👟', { kind: 'move', to: spot, mode: 'jog' }))
-        items.push(mk('Screen', '🧱', { kind: 'screen', to: spot }))
-        if (canSprint) items.push(mk('Sprint', '⚡', { kind: 'cut', to: burstSpot }))
+        if (canSprint) items.push(mk('Sprint', '⚡', { kind: 'drive', to: reachClamp(id, at, true) }))
+        items.push(mk('Move', '👟', { kind: 'move', to: reachClamp(id, at), mode: 'jog' }))
       }
-    } else if (onEnemy && target) {
-      items.push(mk('Guard', '🛡️', { kind: 'guard', markId: target.id }))
-      items.push(mk('Double', '👥', { kind: 'double', markId: target.id }))
-      items.push(mk('Steal', '🖐️', { kind: 'steal', markId: target.id }))
-    } else {
-      items.push(mk('Move', '👟', { kind: 'help', to: spot }))
-      if (canSprint) items.push(mk('Sprint', '⚡', { kind: 'help', to: spot, mode: 'sprint' }))
-    }
-
-    if (items.length === 0) {
-      setRadial(null)
+      setRadial({ at, items })
       return
     }
-    // Always surface the menu rather than auto-firing a lone action — so a drag
-    // always lets you choose (e.g. shoot vs. sprint to the rim), never commits a
-    // shot behind your back.
-    setRadial({ at, items, note })
+
+    // Handler dragged onto the rim → the shot menu (shoot, sprint at it, or lead a
+    // cutter breaking to the rim).
+    if (onHoop) {
+      const canSprint = p.stamina >= SPRINT_FLOOR
+      const lead = bestLeadTarget(id, at)
+      const mk = (label: string, icon: string, order: Order): RadialItem => ({ label, icon, run: () => issue(id, order) })
+      const items: RadialItem[] = [shootItem(id)]
+      if (canSprint) items.push(mk('Sprint', '⚡', { kind: 'drive', to: reachClamp(id, BASKET, true) }))
+      let note: string | undefined
+      if (lead?.catchable) {
+        items.push(mk('Lead pass', '🎯', { kind: 'pass', toId: lead.mover.id, lead: at }))
+        note = '🎯 Lead pass — drops it ahead of a cutter to catch in stride.'
+      }
+      setRadial({ at, items, note })
+      return
+    }
+
+    // Plain solo drag (nothing armed): open the plan editor with a Move waypoint
+    // at the release point — the default first leg.
+    openPlanWith(id, { kind: 'move', to: at, mode: 'jog' })
   }
 
   const onRadialCancel = () => setRadial(null)
@@ -645,19 +584,33 @@ export default function CourtClash() {
       if (id === state.ballHandlerId) {
         list.push({ icon: '🏀', label: 'Shoot', run: () => game.callShot(id) })
         list.push({
-          icon: '🤝',
+          icon: '🎯',
           label: 'Pass',
-          run: () => setPending({ playerId: id, need: 'teammate', make: (t) => ({ kind: 'pass', toId: t }), hint: 'Pick a teammate to pass to.', risk: 'pass' }),
+          run: () => setPending({ playerId: id, need: 'point', make: (pt) => ({ kind: 'pass', lead: pt }), hint: 'Drag or tap a spot to pass — the nearest teammate runs onto it.' }),
         })
-        if (canSprint) list.push({ icon: '⚡', label: 'Sprint', sub: 'fast, committed', mode: 'sprint', run: () => issue(id, { kind: 'drive', to: reachClamp(id, BASKET, true) }) })
+        if (canSprint)
+          list.push({
+            icon: '⚡',
+            label: 'Sprint',
+            sub: 'fast, committed',
+            mode: 'sprint',
+            run: () => setPending({ playerId: id, need: 'point', make: (pt) => ({ kind: 'drive', to: reachClamp(id, pt, true) }), hint: 'Drag or tap a spot to sprint to.' }),
+          })
       } else {
-        if (canSprint) list.push({ icon: '⚡', label: 'Sprint', sub: 'fast, committed', mode: 'sprint', run: () => issue(id, { kind: 'cut', to: reachClamp(id, BASKET, true) }) })
+        if (canSprint)
+          list.push({
+            icon: '⚡',
+            label: 'Sprint',
+            sub: 'fast, committed',
+            mode: 'sprint',
+            run: () => setPending({ playerId: id, need: 'point', make: (pt) => ({ kind: 'cut', to: reachClamp(id, pt, true) }), hint: 'Drag or tap a spot to sprint to.' }),
+          })
         list.push({
           icon: '👟',
           label: 'Move',
           sub: 'slow, nimble',
           mode: 'jog',
-          run: () => setPending({ playerId: id, need: 'point', make: (pt) => ({ kind: 'move', to: pt, mode: 'jog' }), hint: 'Tap a spot within reach.', clampReach: true }),
+          run: () => setPending({ playerId: id, need: 'point', make: (pt) => ({ kind: 'move', to: pt, mode: 'jog' }), hint: 'Drag or tap a spot to move to.', clampReach: true }),
         })
         list.push({
           icon: '🧱',
@@ -667,7 +620,7 @@ export default function CourtClash() {
               playerId: id,
               need: 'point',
               make: (pt) => ({ kind: 'screen', to: pt }),
-              hint: 'Tap a spot on the court to set a screen there.',
+              hint: 'Drag or tap a spot to set a screen there.',
             }),
         })
         list.push({ icon: '⏸', label: 'Hold', sub: 'rest', run: () => issue(id, { kind: 'idle' }) })
@@ -687,7 +640,7 @@ export default function CourtClash() {
         label: 'Move',
         sub: 'slow, nimble',
         mode: 'jog',
-        run: () => setPending({ playerId: id, need: 'point', make: (pt) => ({ kind: 'help', to: pt }), hint: 'Tap a spot within reach.', clampReach: true }),
+        run: () => setPending({ playerId: id, need: 'point', make: (pt) => ({ kind: 'help', to: pt }), hint: 'Drag or tap a spot to move to.', clampReach: true }),
       })
       if (canSprint) {
         list.push({
@@ -695,7 +648,7 @@ export default function CourtClash() {
           label: 'Sprint',
           sub: 'fast, committed cutoff',
           mode: 'sprint',
-          run: () => setPending({ playerId: id, need: 'point', make: (pt) => ({ kind: 'help', to: pt, mode: 'sprint' }), hint: 'Tap a spot to sprint and cut off.', clampReach: true }),
+          run: () => setPending({ playerId: id, need: 'point', make: (pt) => ({ kind: 'help', to: pt, mode: 'sprint' }), hint: 'Drag or tap a spot to sprint and cut off.', clampReach: true }),
         })
       }
     }
@@ -714,8 +667,8 @@ export default function CourtClash() {
       : selected
         ? `${selected.name} (${selected.role}) — pick an action.`
         : onOffense
-          ? 'Your ball. Drag the handler onto the hoop to shoot, or onto a spot/teammate to move/pass — then ▶ Next Step.'
-          : "Defense. Drag one of your players onto the CPU's ball handler to guard, double, or steal — then ▶ Next Step."
+          ? 'Your ball. Drag a player to a spot (or tap to pick screen/pass/sprint first) to plan a play — ✓ to lock it in, then ▶ Next Step.'
+          : "Defense. Drag a player onto the CPU's ball handler to guard, double, or steal, or to a spot to plan help — then ▶ Next Step."
 
   // --- Transport / control modes (Q48) -------------------------------------
   const autoRunning = game.autoRunning
