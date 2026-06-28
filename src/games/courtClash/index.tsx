@@ -494,6 +494,7 @@ export default function CourtClash() {
     const isHandler = id === state.ballHandlerId
     const target = byId(targetId)
     const onEnemy = !!target && target.side !== YOU
+    const onTeammate = !!target && target.side === YOU && target.id !== id
     const onHoop = onOffense && isHandler && dist(at, BASKET) <= HOOP_HIT
 
     // Already authoring a plan? A drag on the planned player EXTENDS the path —
@@ -540,6 +541,16 @@ export default function CourtClash() {
         items.push(mk('Move', '👟', { kind: 'move', to: reachClamp(id, at), mode: 'jog' }))
       }
       setRadial({ at, items })
+      return
+    }
+
+    // Handler dragged straight onto a teammate → pass to him. A body-aimed drop
+    // like the enemy/hoop drops below: a one-shot order, not a plan leg. Aims at
+    // that teammate (toId snapshots his post-move spot) so the ball goes to the
+    // man you pointed at, not the patch of floor under your finger. Takes
+    // priority over the rim's shot menu — a drop on a body is a pass to that body.
+    if (onOffense && isHandler && onTeammate && target) {
+      issue(id, { kind: 'pass', toId: target.id })
       return
     }
 
@@ -667,7 +678,7 @@ export default function CourtClash() {
       : selected
         ? `${selected.name} (${selected.role}) — pick an action.`
         : onOffense
-          ? 'Your ball. Drag a player to a spot (or tap to pick screen/pass/sprint first) to plan a play — ✓ to lock it in, then ▶ Next Step.'
+          ? 'Your ball. Drag the handler onto a teammate to pass, or drag a player to a spot (or tap to pick screen/pass/sprint first) to plan a play — ✓ to lock it in, then ▶ Next Step.'
           : "Defense. Drag a player onto the CPU's ball handler to guard, double, or steal, or to a spot to plan help — then ▶ Next Step."
 
   // --- Transport / control modes (Q48) -------------------------------------
