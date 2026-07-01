@@ -311,6 +311,35 @@ export const GATHER_RELIEF = 1
 export const GATHER_MIN = 2
 
 // ---------------------------------------------------------------------------
+// In-stride finish (no gather). A ball handler sprinting into the rim lays it up
+// IN STRIDE — no windup, so the shot releases the same step and the defense gets
+// no closeout (the payoff for beating your man downhill). This bypasses the
+// gather ONLY inside the layup zone and only when genuinely moving; a pull-up or
+// a standstill still gathers. The finish quality is a speed×distance tradeoff: a
+// full-speed layup from right under the rim is a breakaway bucket, but the
+// farther out (and the faster) you launch the runner, the more you risk an
+// off-balance miss — so a fast handler is pushed to either get all the way to the
+// rim or pull up and gather. See engine.runStep / engine.shotMakeChance.
+// ---------------------------------------------------------------------------
+
+/** Within this distance of the rim a sprinting handler finishes IN STRIDE (skips
+ *  the gather). Matches the layup zone (RIM_RADIUS) — a finish, not a pull-up. */
+export const INSTRIDE_RIM_RADIUS = RIM_RADIUS
+/** Minimum current sprint speed (floor units/step) to qualify as "in stride" —
+ *  genuinely downhill, not a walk-up gather. Set above a flat jog (BASE_STEP = 5)
+ *  so a built-up drive qualifies but a standstill or a jogged catch does not. */
+export const INSTRIDE_SPRINT_MIN = 6.5
+/** Momentum payoff: a full-speed finish right at the rim adds up to this to the
+ *  make chance (a breakaway layup). Scales with BOTH speed and rim closeness. */
+export const INSTRIDE_MOMENTUM_BONUS = 0.12
+/** Control cost: a full-speed runner launched from the EDGE of the in-stride zone
+ *  loses up to this off the make chance (off-balance). Scales with BOTH speed and
+ *  distance from the rim, so the net effect flips from a bonus at the basket to a
+ *  penalty out toward the edge — speed helps when you finish tight, hurts when you
+ *  launch early. */
+export const INSTRIDE_CONTROL_PENALTY = 0.16
+
+// ---------------------------------------------------------------------------
 // Contest model. Openness dominates; stat deltas swing it; randomness seasons.
 // All probabilities are clamped to [0.03, 0.97].
 // ---------------------------------------------------------------------------

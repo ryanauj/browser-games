@@ -16,6 +16,10 @@ import {
   GATHER_BASE,
   GATHER_MIN,
   GATHER_RELIEF,
+  INSTRIDE_CONTROL_PENALTY,
+  INSTRIDE_MOMENTUM_BONUS,
+  INSTRIDE_RIM_RADIUS,
+  INSTRIDE_SPRINT_MIN,
   HALT_STEP_CAP,
   MAX_QUEUE,
   GAMBLE_MISS_LUNGE,
@@ -801,6 +805,27 @@ export function blockChance(players: Player[], shooter: Player): { p: number; bl
   return { p, blocker }
 }
 
+/** A sprinting handler inside the layup zone finishes IN STRIDE — no gather (Q17/
+ *  Q33), the shot releases the same step. Read off live momentum, so a rooted
+ *  (gathering) or standstill handler is never in stride: a windup zeroes
+ *  `sprintSpeed`, so a gathered release resolves as an ordinary layup. */
+function isInStrideFinish(shooter: Player): boolean {
+  return shooter.sprintSpeed >= INSTRIDE_SPRINT_MIN && distToRim(shooter.pos) <= INSTRIDE_RIM_RADIUS
+}
+
+/** Speed×distance adjustment to an in-stride layup's make chance. Momentum helps
+ *  a finish taken tight to the rim (a breakaway bucket) and hurts one launched
+ *  from the edge of the zone (an off-balance runner); both terms scale with how
+ *  fast the handler is actually moving, so a barely-jogging finish is ~neutral and
+ *  a full-speed one swings the most. Net: a bonus at the basket, a penalty out
+ *  toward the edge. */
+function inStrideFinishMod(shooter: Player): number {
+  const top = sprintTopOf(shooter)
+  const speedNorm = Math.max(0, Math.min(1, (shooter.sprintSpeed - INSTRIDE_SPRINT_MIN) / Math.max(0.001, top - INSTRIDE_SPRINT_MIN)))
+  const closeness = 1 - Math.min(1, distToRim(shooter.pos) / INSTRIDE_RIM_RADIUS)
+  return speedNorm * (INSTRIDE_MOMENTUM_BONUS * closeness - INSTRIDE_CONTROL_PENALTY * (1 - closeness))
+}
+
 /** Probability a called shot goes in (pre-block). Openness dominates. */
 export function shotMakeChance(players: Player[], shooter: Player): number {
   const type = shotType(shooter.pos)
@@ -813,7 +838,8 @@ export function shotMakeChance(players: Player[], shooter: Player): number {
     statN(skill) * SHOT_STAT_WEIGHT -
     rangePenalty(shooter.pos) * 0.28 -
     (isGassed(shooter) ? 0.08 : 0) +
-    (shooter.primed > 0 ? DRIVE_FINISH_BONUS : 0) // downhill off a drive
+    (shooter.primed > 0 ? DRIVE_FINISH_BONUS : 0) + // downhill off a drive
+    (isInStrideFinish(shooter) ? inStrideFinishMod(shooter) : 0) // running finish, no gather
   return clampP(p)
 }
 
@@ -1079,6 +1105,7 @@ function runStep(state: GameState, playerShootId?: string): GameState {
   const shootId = state.offense === 'ai' ? plan.shoot : playerShootId
   let activeGather = state.gather
   let startRelease: number | null = null
+  let inStrideShotId: string | null = null
   if (activeGather) {
     // Continue an in-progress windup: the shooter is committed (rooted), unless he
     // somehow no longer holds the ball (then the windup is void).
@@ -1097,10 +1124,18 @@ function runStep(state: GameState, playerShootId?: string): GameState {
       take = mustShoot || openness(players, shooter) > need
     }
     if (shooter && take) {
-      const n = gatherStepsOf(shooter)
-      shooter.order = { kind: 'idle' } // root for the windup
-      if (shooter.primed > 0) shooter.primed = n + 1 // keep a drive's finish alive to release
-      startRelease = n - 1 // windup steps remaining after this start step
+      if (isInStrideFinish(shooter)) {
+        // IN-STRIDE FINISH (Q17/Q33): sprinting into the rim, he lays it up in
+        // stride — NO gather. He is NOT rooted, so his drive rides through this
+        // step (building `primed` and the finish momentum shotMakeChance reads);
+        // the shot then releases post-movement below. The defense gets no closeout.
+        inStrideShotId = shooter.id
+      } else {
+        const n = gatherStepsOf(shooter)
+        shooter.order = { kind: 'idle' } // root for the windup
+        if (shooter.primed > 0) shooter.primed = n + 1 // keep a drive's finish alive to release
+        startRelease = n - 1 // windup steps remaining after this start step
+      }
     }
   }
 
@@ -1123,6 +1158,15 @@ function runStep(state: GameState, playerShootId?: string): GameState {
   if (state.ball) return advanceFlight(state, players, r)
 
   const handler = byId(players, state.ballHandlerId)
+
+  // 3a. IN-STRIDE FINISH (Q17/Q33). A handler who committed while sprinting into
+  //     the rim skips the windup: the ball releases THIS step, resolved against the
+  //     post-movement floor (his drive rode through it, so he's a step closer and
+  //     still carrying momentum) with the speed×distance finish adjustment baked
+  //     into shotMakeChance. No gather = no closeout window for the defense.
+  if (inStrideShotId) {
+    return resolveShot({ ...state, players, gather: null, rngState: r.next }, inStrideShotId)
+  }
 
   // 3. GATHER → RELEASE (Q17/Q33). The shot resolves against the post-movement
   //    floor — the defense has had the whole windup to close, so a good closeout
